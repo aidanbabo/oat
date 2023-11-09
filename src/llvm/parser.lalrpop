@@ -1,0 +1,260 @@
+use std::str::FromStr;
+use crate::llvm::ast;
+use crate::llvm::parser_utils::{append, escape_string, gensym};
+
+grammar;
+
+match {
+	// eof => EOF,
+	r"[\t ]" => {},
+	r"\n|(\r\n)|\r" => {},
+	r#"c"[^(\")]""# => UNESCAPED_STRING,
+	"*" => STAR,
+	","=> COMMA,
+	":" => COLON,
+	"=" => EQUALS,
+	"(" => LPAREN,
+	")" => RPAREN,
+	"{" => LBRACE,
+	"}" => RBRACE,
+	"[" => LBRACKET,
+	"]" => RBRACKET,
+	"i1" => I1,
+	"i8" => I8,
+	"i32" => I32,
+	"i64" => I64,
+	"to" => TO,
+	"br" => BR,
+	"eq" => EQ,
+	"ne" => NE,
+	"or" => OR,
+	"and" => AND,
+	"add" => ADD,
+	"sub" => SUB,
+	"mul" => MUL,
+	"xor" => XOR,
+	"slt" => SLT,
+	"sle" => SLE,
+	"sgt" => SGT,
+	"sge" => SGE,
+	"shl" => SHL,
+	"ret" => RET,
+	"getelementptr" => GEP,
+	"type" => TYPE,
+	"null" => NULL,
+	"lshr" => LSHR,
+	"ashr" => ASHR,
+	"call" => CALL,
+	"icmp" => ICMP,
+	"void" => VOID,
+	"load" => LOAD,
+	"entry" => ENTRY,
+	"store" => STORE,
+	"label" => LABEL,
+	"global" => GLOBAL,
+	"define" => DEFINE,
+	"declare" => DECLARE,
+	"external" => EXTERNAL,
+	"alloca" => ALLOCA,
+	"bitcast" => BITCAST,
+	r"%\.?[A-Za-z\d_][A-Za-z\d_\.]*" => UID_RAW,
+	r"\@\.?[A-Za-z\d_][A-Za-z\d_\.]*" => GID_RAW,
+	"x" => CROSS,
+	r"\d+" => INT,
+	r";([^\n\r])*\n" => {}, // comments
+	r"declare([^\n\r])*\n" => {}, // declare acts as a comment for our IR
+} else {
+	r"[A-Za-z\d_][A-Za-z\d_\.]" => LBL,
+}
+
+pub Prog: ast::Prog = <Decls>;
+
+Decls: ast::Prog = {
+	() => ast::Prog { 
+		tdecls: vec![], 
+		gdecls: vec![], 
+		fdecls: vec![], 
+		edecls: vec![], 
+	},
+	<mut ds:Decls> <f:Fdecl> => {
+		ds.fdecls.push(f);
+		ds
+	},
+	<mut ds:Decls> <g:Gdecl> => {
+		ds.gdecls.push(g);
+		ds
+	},
+	<mut ds:Decls> <t:Tdecl> => {
+		ds.tdecls.push(t);
+		ds
+	},
+	<mut ds:Decls> <e:Edecl> => {
+		ds.edecls.push(e);
+		ds
+	},
+};
+
+Fdecl: (ast::Gid, ast::Fdecl) = {
+	DEFINE <t:Ty> <l:GID> LPAREN <a:ArgList> RPAREN
+	LBRACE <eb:EntryBlock> <bs:BlockList> RBRACE => {
+		let (ptys, pnames) = a.into_iter().unzip();
+		(l, ast::Fdecl {
+			ty: ast::FunTy {
+				params: ptys,
+				ret: t,
+			},
+			params: pnames,
+			cfg: ast::Cfg { entry: eb, blocks: bs },
+		})
+	}
+};
+
+Gdecl: (ast::Gid, ast::Gdecl) = {
+	<g:GID> EQUALS GLOBAL <t:Ty> <gi:Ginit> => (g, (t, gi)),
+};
+
+Tdecl: (ast::Tid, ast::Ty) = {
+	<tid:UID> EQUALS TYPE <t:Ty> => (tid, t),
+};
+
+Edecl: (ast::Gid, ast::Ty) = {
+	DECLARE <rt:Ty> <g:GID> LPAREN <ts:Comma<Ty>> RPAREN => (g, ast::Ty::Fun(ts, Box::new(rt))),
+	<g:GID> EQUALS EXTERNAL GLOBAL <t:Ty> => (g, t),
+};
+
+NonPtrTy: ast::Ty = {
+	VOID => ast::Ty::Void,
+	I1 => ast::Ty::I1,
+	I8 => ast::Ty::I8,
+	I64 => ast::Ty::I64,
+	LBRACE <ts:TyList> RBRACE => ast::Ty::Struct(ts),
+	LBRACKET <i:INT> CROSS <t:Ty> RBRACKET => ast::Ty::Array(i64::from_str(i).unwrap(), Box::new(t)),
+	<rt:Ty> LPAREN <ts:TyList> RPAREN => ast::Ty::Fun(ts, Box::new(rt)),
+	<t:UID> => ast::Ty::Named(t),
+};
+
+Ty: ast::Ty = {
+	<t:Ty> STAR => ast::Ty::Ptr(Box::new(t)),
+	NonPtrTy => <>,
+};
+
+TyList: Vec<ast::Ty> = {
+	Ty => vec![<>],
+	<ts:TyList> COMMA <t:Ty> => append(ts, t),
+};
+
+Arg: (ast::Ty, ast::Uid) = {
+	Ty UID => (<>),
+};
+
+ArgList: Vec<(ast::Ty, ast::Uid)> = {
+	() => vec![],
+	Arg => vec![<>],
+	<args:ArgList> COMMA <a:Arg> => append(args, a),
+};
+
+Operand: ast::Operand = {
+	NULL => ast::Operand::Null,
+	INT => ast::Operand::Const(i64::from_str(<>).unwrap()),
+	GID => ast::Operand::Gid(<>),
+	UID => ast::Operand::Id(<>),
+};
+
+TyOperandList: Vec<(ast::Ty, ast::Operand)> = {
+	() => vec![],
+	Ty Operand => vec![(<>)],
+	<tos:TyOperandList> COMMA <t:Ty> <o:Operand> => append(tos, (t, o)),
+};
+
+IOperandList: Vec<ast::Operand> = {
+	() => vec![],
+	I64 <Operand> => vec![<>],
+	I32 <Operand> => vec![<>],
+	<os:IOperandList> COMMA I64 <o:Operand> => append(os, o),
+	<os:IOperandList> COMMA I32 <o:Operand> => append(os, o),
+};
+
+Terminator: ast::Terminator = {
+	RET <t:Ty> <o:Operand> => ast::Terminator::Ret(t, Some(o)),
+	RET <t:Ty> => ast::Terminator::Ret(t, None),
+	BR LABEL <l:UID> => ast::Terminator::Br(l),
+	BR I1 <o:Operand> COMMA LABEL <l1:UID> COMMA LABEL <l2:UID> => ast::Terminator::Cbr(o, l1, l2),
+};
+
+Block: ast::Block = {
+	<is:InsnList> <t:Terminator> => ast::Block {
+		insns: is,
+		term: (gensym("tmn"), t),
+	},
+}
+
+BlockList: Vec<(ast::Lbl, ast::Block)> = {
+	() => vec![],
+	<bs:BlockList> <l:LBL> COLON <b:Block> => append(bs, (l.to_string(), b)),
+};
+
+EntryBlock: ast::Block = {
+	ENTRY COLON <Block> => <>,
+	Block => <>
+};
+
+Bop: ast::Bop = {
+	OR => ast::Bop::Or,
+	ADD => ast::Bop::Add,
+	SUB => ast::Bop::Sub,
+	MUL => ast::Bop::Mul,
+	SHL => ast::Bop::Shl,
+	XOR => ast::Bop::Xor,
+	AND => ast::Bop::And,
+	LSHR => ast::Bop::Lshr,
+	ASHR => ast::Bop::Ashr,
+};
+
+Cnd: ast::Cnd = {
+	EQ => ast::Cnd::Eq,
+	NE => ast::Cnd::Ne,
+	SLT => ast::Cnd::Slt,
+	SLE => ast::Cnd::Sle,
+	SGT => ast::Cnd::Sgt,
+	SGE => ast::Cnd::Sge,
+};
+
+Insn: (ast::Uid, ast::Insn) = {
+	<u:UID> EQUALS <b:Bop> <t:Ty> <o1:Operand> COMMA <o2:Operand> => (u, ast::Insn::Binop(b, t, o1, o2)),
+	<u:UID> EQUALS ALLOCA <t:Ty> => (u, ast::Insn::Alloca(t)),
+	<u:UID> EQUALS LOAD Ty COMMA <t:Ty> <o:Operand> => (u, ast::Insn::Load(t, o)),
+	STORE <t1:Ty> <o1:Operand> COMMA <_t2:Ty> <o2:Operand> => (gensym("store"), ast::Insn::Store(t1, o1, o2)),
+	<u:UID> EQUALS ICMP <c:Cnd> <t:Ty> <o1:Operand> COMMA <o2:Operand> => (u, ast::Insn::Icmp(c, t, o1, o2)),
+	CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (gensym("call"), ast::Insn::Call(t, o, args)),
+	<u:UID> EQUALS CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (u, ast::Insn::Call(t, o, args)),
+	<u:UID> EQUALS BITCAST <t1:Ty> <o:Operand> TO <t2:Ty> => (u, ast::Insn::Bitcast(t1, o, t2)),
+	<u:UID> EQUALS GEP <t:Ty> <o:Operand> COMMA <os:IOperandList> => (u, ast::Insn::Gep(t, o, os)),
+};
+
+InsnList: Vec<(ast::Uid, ast::Insn)> = <(Insn)*> => <>;
+
+GdeclList: Vec<(ast::Ty, ast::Ginit)> = {
+	() => vec![],
+	Ty Ginit => vec![(<>)],
+	<gs:GdeclList> COMMA <t:Ty> <g:Ginit> => append(gs, (t, g)),
+};
+
+Ginit: ast::Ginit = {
+	NULL => ast::Ginit::Null,
+	GID => ast::Ginit::Gid(<>),
+	INT => ast::Ginit::Int(i64::from_str(<>).unwrap()),
+	UNESCAPED_STRING => ast::Ginit::String(escape_string(<>)),
+	LBRACKET <GdeclList> RBRACKET => ast::Ginit::Array(<>),
+	LBRACE <GdeclList> RBRACE => ast::Ginit::Struct(<>),
+	BITCAST LPAREN <t1:Ty> <g:Ginit> TO <t2:Ty> RPAREN => ast::Ginit::Bitcast(t1, Box::new(g), t2),
+};
+
+Comma<T>: Vec<T> = {
+    <v:(<T> COMMA)*> <e:T?> => match e {
+        None => v,
+        Some(e) => append(v, e),
+    }
+};
+
+UID: String = UID_RAW => <>[1..].to_string();
+GID: String = GID_RAW => <>[1..].to_string();
