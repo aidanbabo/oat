@@ -6,9 +6,29 @@ pub fn append<T>(mut v: Vec<T>, t: T) -> Vec<T> {
 	v
 }
 
-// todo: escape!
+// should we add support for all hex escapes?
+// this means we may need to use Vec<u8> :(
 pub fn escape_string(s: &str) -> String {
-    s.to_string()
+    let mut out = String::new();
+    // skip `c"` at start and `"` at end
+    let mut iter = s.chars().skip(2).take(s.len() - 3);
+
+    while let Some(c) = iter.next() {
+        if c == '\\' {
+            let c2 = iter.next().expect("escaped character");
+            if c2 == '\\' {
+                out.push('\\');
+            } else if c2 == '"' {
+                out.push('"');
+            } else if c2 == '0' {
+                iter.next().filter(|&c| c == '0').expect("second zero digit in hex escape");
+                out.push('\0');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 // fixme: global state! ugh!

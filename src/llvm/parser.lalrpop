@@ -8,7 +8,7 @@ match {
 	// eof => EOF,
 	r"[\t ]" => {},
 	r"\n|(\r\n)|\r" => {},
-	r#"c"[^(\")]""# => UNESCAPED_STRING,
+	r#"c"([^"\\]|(\\")|(\\00))*""# => UNESCAPED_STRING,
 	"*" => STAR,
 	","=> COMMA,
 	":" => COLON,
@@ -64,7 +64,7 @@ match {
 	r";([^\n\r])*\n" => {}, // comments
 	r"declare([^\n\r])*\n" => {}, // declare acts as a comment for our IR
 } else {
-	r"[A-Za-z\d_][A-Za-z\d_\.]" => LBL,
+	r"[A-Za-z\d_][A-Za-z\d_\.]*" => LBL,
 }
 
 pub Prog: ast::Prog = <Decls>;
@@ -228,7 +228,7 @@ Insn: (ast::Uid, ast::Insn) = {
 	CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (gensym("call"), ast::Insn::Call(t, o, args)),
 	<u:UID> EQUALS CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (u, ast::Insn::Call(t, o, args)),
 	<u:UID> EQUALS BITCAST <t1:Ty> <o:Operand> TO <t2:Ty> => (u, ast::Insn::Bitcast(t1, o, t2)),
-	<u:UID> EQUALS GEP <t:Ty> <o:Operand> COMMA <os:IOperandList> => (u, ast::Insn::Gep(t, o, os)),
+	<u:UID> EQUALS GEP Ty COMMA <t:Ty> <o:Operand> COMMA <os:IOperandList> => (u, ast::Insn::Gep(t, o, os)),
 };
 
 InsnList: Vec<(ast::Uid, ast::Insn)> = <(Insn)*> => <>;
