@@ -6,7 +6,7 @@ pub type Tid = String;
 
 pub type Lbl = String;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Ty {
     Void,
     I1,
