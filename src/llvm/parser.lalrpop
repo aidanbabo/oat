@@ -71,10 +71,10 @@ pub Prog: ast::Prog = <Decls>;
 
 Decls: ast::Prog = {
 	() => ast::Prog { 
-		tdecls: vec![], 
-		gdecls: vec![], 
-		fdecls: vec![], 
-		edecls: vec![], 
+		tdecls: Default::default(),
+		gdecls: Default::default(),
+		fdecls: Default::default(),
+		edecls: Default::default(),
 	},
 	<mut ds:Decls> <f:Fdecl> => {
 		ds.fdecls.push(f);
@@ -85,7 +85,7 @@ Decls: ast::Prog = {
 		ds
 	},
 	<mut ds:Decls> <t:Tdecl> => {
-		ds.tdecls.push(t);
+		ds.tdecls.insert(t.0, t.1);
 		ds
 	},
 	<mut ds:Decls> <e:Edecl> => {

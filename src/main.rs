@@ -13,10 +13,19 @@ struct Args {
 fn main() {
     let args = Args::parse();
     let s = fs::read_to_string(&args.path).unwrap();
-    let prog = oat::llvm::parse(&s);
+    let prog = match oat::llvm::parse(&s) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return;
+        }
+    };
+
     if args.pretty {
         println!("{prog:#?}");
     } else {
         println!("{prog:?}");
     }
+    let r = oat::llvm::interp::interp_prog(&prog, &[]).unwrap();
+    println!("Program returned {r}");
 }

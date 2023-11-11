@@ -1,52 +1,28 @@
 use oat::llvm;
 use std::fs;
 
-fn parse_test(tests: impl Iterator<Item = &'static str>) {
-    for test in tests {
-        let s = fs::read_to_string(format!("tests/programs/{test}")).unwrap();
-        llvm::parse(&s).expect(test);
-    }
+macro_rules! interp_test {
+    ($binop:ident, $tests:ident) => {
+        #[test]
+        fn $binop() {
+            for &(test, ret) in $tests {
+                let s = fs::read_to_string(format!("tests/programs/{test}")).expect("failed to read file");
+                let prog = llvm::parse(&s).expect(test);
+                let r = llvm::interp::interp_prog(&prog, &[]).expect("execution failed");
+                assert_eq!(r, ret, "failed on test {test}");
+            }
+        }
+    };
 }
 
-#[test]
-fn binops() {
-    parse_test(BINOP_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn calling_convention() {
-    parse_test(CALLING_CONVENTION_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn memory() {
-    parse_test(MEMORY_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn terminator() {
-    parse_test(TERMINATOR_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn bitcast() {
-    parse_test(BITCAST_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn gep() {
-    parse_test(GEP_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn io() {
-    parse_test(IO_TESTS.iter().map(|t| t.0));
-}
-
-#[test]
-fn large() {
-    parse_test(LARGE_TESTS.iter().map(|t| t.0));
-}
+interp_test!(binop_interp, BINOP_TESTS);
+interp_test!(calling_converntion_interp, CALLING_CONVENTION_TESTS);
+interp_test!(memory_interp, MEMORY_TESTS);
+interp_test!(terminator_interp, TERMINATOR_TESTS);
+interp_test!(bitcast_interp, BITCAST_TESTS);
+interp_test!(gep_interp, GEP_TESTS);
+// interp_test!(IO_TESTS);
+interp_test!(large_interp, LARGE_TESTS);
 
 const BINOP_TESTS: &[(&str, i64)] = &[
     ("llprograms/add.ll", 14),

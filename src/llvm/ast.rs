@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 pub type Uid = String;
 
 pub type Gid = String;
@@ -34,7 +36,7 @@ pub enum Operand {
     Id(Uid),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Bop {
     Add,
     Sub,
@@ -47,7 +49,7 @@ pub enum Bop {
     Xor,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Cnd {
     Eq,
     Ne,
@@ -95,7 +97,7 @@ pub struct Fdecl {
     pub cfg: Cfg,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Ginit {
     Null,
     Gid(Gid),
@@ -110,7 +112,7 @@ pub type Gdecl = (Ty, Ginit);
 
 #[derive(Debug)]
 pub struct Prog {
-    pub tdecls: Vec<(Tid, Ty)>,
+    pub tdecls: HashMap<Tid, Ty>,
     pub gdecls: Vec<(Gid, Gdecl)>,
     pub fdecls: Vec<(Gid, Fdecl)>,
     pub edecls: Vec<(Gid, Ty)>,
