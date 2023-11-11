@@ -32,7 +32,7 @@ impl fmt::Display for Bid {
 struct Ptr {
     ty: ast::Ty,
     bid: Bid,
-    indicies: Vec<Idx>, 
+    indices: Vec<Idx>, 
 }
 
 impl fmt::Display for Ptr {
@@ -40,7 +40,7 @@ impl fmt::Display for Ptr {
         // todo: display for Ty
         write!(f, "{:?} {} ", self.ty, self.bid)?;
         let mut first = true;
-        for idx in &self.indicies {
+        for idx in &self.indices {
             if first {
                 write!(f, ", {idx}")?
                } else {
@@ -108,10 +108,12 @@ impl fmt::Display for MVal {
 }
 
 type Locals = HashMap<ast::Uid, SVal>;
+
+#[derive(Clone)]
 struct Config {
-    globals: Vec<(ast::Gid, MVal)>,
-    heap: Vec<(Mid, MVal)>,
-    stack: Vec<(Fid, MVal)>,
+    globals: HashMap<ast::Gid, MVal>,
+    heap: HashMap<Mid, MVal>,
+    stack: HashMap<Fid, MVal>,
 }
 
 // this always adds a lists worth of indirection, why?
@@ -121,12 +123,12 @@ fn mval_of_gdecl(gd: ast::Gdecl) -> MVal {
             (ty, ast::Ginit::Null) => MTree::Word(SVal::Ptr(Ptr {
                 ty,
                 bid: Bid::NullId,
-                indicies: vec![0],
+                indices: vec![0],
             })),
             (ty, ast::Ginit::Gid(g)) => MTree::Word(SVal::Ptr(Ptr {
                 ty,
                 bid: Bid::GlobalId(g),
-                indicies: vec![0],
+                indices: vec![0],
             })),
             (_, ast::Ginit::Bitcast(t1, v, _)) => mtree_of_gdecl((t1, *v)),
             (_, ast::Ginit::Int(i)) => MTree::Word(SVal::Int(i)),
@@ -194,11 +196,11 @@ fn interp_bop(b: ast::Bop, v1: SVal, v2: SVal) -> SVal {
 fn interp_cnd(c: ast::Cnd, v1: SVal, v2: SVal) -> SVal {
     match (v1, v2, c) {
         (SVal::Ptr(p1), SVal::Ptr(p2), ast::Cnd::Eq) => {
-            let b = p1.bid == p2.bid && p1.indicies == p2.indicies;
+            let b = p1.bid == p2.bid && p1.indices == p2.indices;
             SVal::Int(b as i64)
         }
         (SVal::Ptr(p1), SVal::Ptr(p2), ast::Cnd::Ne) => {
-            let b = p1.bid != p2.bid || p1.indicies != p2.indicies;
+            let b = p1.bid != p2.bid || p1.indices != p2.indices;
             SVal::Int(b as i64)
         }
         (SVal::Int(i), SVal::Int(j), c) => {
@@ -231,12 +233,12 @@ fn interp_operand(named_types: &HashMap<ast::Tid, ast::Ty>, locals: &Locals, ty:
         (ast::Ty::Ptr(ty), ast::Operand::Null) => SVal::Ptr(Ptr {
             ty: (**ty).clone(),
             bid: Bid::NullId,
-            indicies: vec![0],
+            indices: vec![0],
         }),
         (ast::Ty::Ptr(ty), ast::Operand::Gid(g)) => SVal::Ptr(Ptr {
             ty: (**ty).clone(),
             bid: Bid::GlobalId(g.clone()),
-            indicies: vec![0],
+            indices: vec![0],
         }),
         (_, ast::Operand::Id(u)) => locals[u].clone(),
         (ast::Ty::Named(id), o) => interp_operand(named_types, locals, &named_types[&*id], o),
@@ -290,5 +292,126 @@ fn store_idxs(m: &MVal, idxs: &[Idx], mt: &MTree) -> Result<MVal, ExecError> {
                 }
             }
         }
+    }
+}
+
+fn load_bid(c: &Config, bid: &Bid) -> Result<MVal, ExecError> {
+    match bid {
+        Bid::NullId => return Err(ExecError::NullPtrDeref),
+        Bid::HeapId(mid) => c.heap.get(mid).map(Clone::clone).ok_or(ExecError::UseAfterFree),
+        Bid::GlobalId(gid) => Ok(c.globals.get(gid).expect("Load: bogus gid").clone()),
+        Bid::StackId(fid) => c.stack.get(fid).map(Clone::clone).ok_or(ExecError::UseAfterFree),
+    }
+}
+
+fn load_ptr(c: &Config, p: Ptr) -> Result<MTree, ExecError> {
+    load_idxs(&load_bid(c, &p.bid)?, &p.indices)
+}
+
+fn store_ptr(c: &Config, p: &Ptr, mt: &MTree) -> Result<Config, ExecError> {
+    let mval = load_bid(c, &p.bid)?;
+    match &p.bid {
+        Bid::NullId => return Err(ExecError::NullPtrDeref),
+        Bid::HeapId(mid) => {
+            let mval = store_idxs(&mval, &p.indices, mt)?;
+            let mut config = c.clone();
+            config.heap.insert(mid.clone(), mval);
+            Ok(config)
+        }
+        Bid::GlobalId(gid) => {
+            let mval = store_idxs(&mval, &p.indices, mt)?;
+            let mut config = c.clone();
+            config.globals.insert(gid.clone(), mval);
+            Ok(config)
+        }
+        Bid::StackId(fid) => {
+            let frame = store_idxs(&mval, &p.indices, mt)?;
+            let mut config = c.clone();
+            config.stack.insert(fid.clone(), frame);
+            Ok(config)
+        }
+    }
+}
+
+// Tag and GEP implementation
+fn effective_tag(named_types: &HashMap<ast::Tid, ast::Ty>, p: &Ptr) -> ast::Ty {
+    let mut idxs = p.indices.get(1..).expect("effective_tag: invalid pointer to missing first index");
+    let mut tag = &p.ty;
+    while !idxs.is_empty() {
+        match (tag, idxs) {
+            (ast::Ty::Struct(ts), [i, idxs2@..]) => {
+                tag = ts.get(*i as usize).expect("effective_tag: index oob of struct");
+                idxs = idxs2;
+            }
+            (ast::Ty::Array(_, t), [_, idxs2@..]) => {
+                // Don't check if OOB!
+                tag = &*t;
+                idxs = idxs2;
+            }
+            (ast::Ty::Named(id), _) => {
+                tag = &named_types[id];
+            }
+            _ => panic!("effective_tag: index into non-empty aggregate"),
+        }
+    }
+    tag.clone()
+}
+
+fn gep_idxs(p: &[Idx], idxs: &[Idx]) -> Vec<Idx> {
+    let (i, ps) = p.split_last().expect("gep_idxs: invalid indices");
+    let (j, idxs) = idxs.split_first().expect("gep_idxs: invalid indices");
+    ps.iter().copied()
+        .chain(std::iter::once(i + j))
+        .chain(idxs.iter().copied()).collect()
+}
+
+// direct port: this is so annoying looking :(
+fn legal_gep(named_types: &HashMap<ast::Tid, ast::Ty>, sty: &ast::Ty, tag: &ast::Ty) -> bool {
+    fn ptrtoi8(named_types: &HashMap<ast::Tid, ast::Ty>, ty: &ast::Ty) -> ast::Ty {
+        match ty {
+            ast::Ty::Ptr(_) => ast::Ty::Ptr(Box::new(ast::Ty::I8)),
+            ast::Ty::Struct(ts) => ast::Ty::Struct(ts.iter().map(|t| ptrtoi8(named_types, t)).collect()),
+            ast::Ty::Array(n, t) => ast::Ty::Array(*n, Box::new(ptrtoi8(named_types, t))),
+            ast::Ty::Named(id) => ptrtoi8(named_types, &named_types[id]),
+            t => t.clone(),
+        }
+    }
+    fn flatten_ty<'a>(named_types: &'a HashMap<ast::Tid, ast::Ty>, ty: &'a ast::Ty, b: &mut Vec<&'a ast::Ty>) {
+        match ty {
+            ast::Ty::Struct(ts) => {
+                for t in ts {
+                    flatten_ty(named_types, t, b);
+                }
+            }
+            t => b.push(t),
+        }
+    }
+
+    let mut styb = vec![];
+    let mut tagb = vec![];
+    let styi8 = ptrtoi8(named_types, &sty);
+    let tagi8 = ptrtoi8(named_types, &tag);
+    flatten_ty(named_types, &styi8, &mut styb);
+    flatten_ty(named_types, &tagi8, &mut tagb);
+
+    if tagb.len() < styb.len() {
+        return false;
+    }
+
+    Iterator::eq(styb.iter(), tagb.iter().take(styb.len()))
+}
+
+fn gep_ptr(named_types: &HashMap<ast::Tid, ast::Ty>, ot: &ast::Ty, p: &Ptr, idxs: &[Idx]) -> SVal {
+    if !legal_gep(named_types, ot, &effective_tag(named_types, p)) {
+        return SVal::Undef;
+    }
+
+    match p {
+        Ptr { bid: Bid::NullId, .. } => SVal::Undef,
+        Ptr { ty, bid, indices } => SVal::Ptr(Ptr {
+            ty: ty.clone(),
+            bid: bid.clone(),
+            indices: gep_idxs(indices, idxs),
+        }),
     }
 }
