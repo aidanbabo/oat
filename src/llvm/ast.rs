@@ -1,3 +1,4 @@
+use core::fmt;
 use std::collections::HashMap;
 
 pub type Uid = String;
@@ -116,4 +117,44 @@ pub struct Prog {
     pub gdecls: Vec<(Gid, Gdecl)>,
     pub fdecls: Vec<(Gid, Fdecl)>,
     pub edecls: Vec<(Gid, Ty)>,
+}
+
+impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Ty::Void => write!(f, "void"),
+            Ty::I1 => write!(f, "i1"),
+            Ty::I8 => write!(f, "i8"),
+            Ty::I64 => write!(f, "i64"),
+            Ty::Ptr(t) => write!(f, "{t}*"),
+            Ty::Struct(ts) => { 
+                write!(f, "{{ ")?;
+                let mut first = true;
+                for t in ts {
+                    if first {
+                        write!(f, "{t}")?
+                    } else {
+                        write!(f, " {t}")?
+                    }
+                    first = false;
+                }
+                write!(f, " }}")
+            }
+            Ty::Array(n, t) => write!(f, "[{n} x {t}]"),
+            Ty::Fun(ts, t) => {
+                write!(f, "{t} (")?;
+                let mut first = true;
+                for t in ts {
+                    if first {
+                        write!(f, "{t}")?
+                    } else {
+                        write!(f, " {t}")?
+                    }
+                    first = false;
+                }
+                write!(f, ")")
+            }
+            Ty::Named(name) => write!(f, "%{name}"),
+        }
+    }
 }

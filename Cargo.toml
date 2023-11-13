@@ -9,6 +9,7 @@ edition = "2021"
 clap = { version = "4.4.7", features = ["derive"] }
 lalrpop-util = { version = "0.20.0", features = ["lexer", "unicode"] }
 once_cell = "1.18.0"
+thiserror = "1.0.50"
 
 [build-dependencies]
 lalrpop = "0.20.0"

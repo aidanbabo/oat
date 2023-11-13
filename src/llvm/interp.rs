@@ -1,7 +1,7 @@
 // todo: figure out references and stuff like what the hell ?!?
 
 use std::collections::{HashMap, BTreeMap};
-use std::fmt;
+use std::{fmt, ops};
 
 use super::ast;
 
@@ -37,14 +37,13 @@ struct Ptr {
 
 impl fmt::Display for Ptr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // todo: display for Ty
-        write!(f, "{:?} {} ", self.ty, self.bid)?;
+        write!(f, "{} {} ", self.ty, self.bid)?;
         let mut first = true;
         for idx in &self.indices {
             if first {
-                write!(f, ", {idx}")?
-               } else {
                 write!(f, "{idx}")?
+               } else {
+                write!(f, ", {idx}")?
             }
             first = false;
         }
@@ -107,7 +106,39 @@ impl fmt::Display for MVal {
     }
 }
 
-type Locals = HashMap<ast::Uid, SVal>;
+
+#[derive(Clone, Debug)]
+struct Locals(HashMap<ast::Uid, SVal>);
+
+impl ops::Deref for Locals {
+    type Target = HashMap<ast::Uid, SVal>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ops::DerefMut for Locals {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl fmt::Display for Locals {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{")?;
+        let mut first = true;
+        for (k, v) in &self.0 {
+            if first {
+                write!(f, "{k}: {v}")?;
+            } else {
+                write!(f, ", {k}: {v}")?;
+            }
+            first = false;
+        }
+        write!(f, "}}")
+    }
+}
 
 #[derive(Clone)]
 struct Config {
@@ -156,22 +187,28 @@ fn mval_of_ty(named_types: &HashMap<ast::Tid, ast::Ty>, t: ast::Ty) -> MVal {
     MVal(vec![mtree_of_ty(named_types, t)])
 }
 
-// todo: ThisError
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum ExecError {
     /// mem access not in bounds
+    #[error("out of bounds memory access")]
     OOBIndexDeref,
     /// deref Null
+    #[error("null pointer dereference")]
     NullPtrDeref,
     /// deref Undef pointer (from bad GEP)
+    #[error("undefined pointer dereference")]
     UndefPtrDeref,
     /// deref pointer at wrong type (bad bitcast)
+    #[error("incompatible tag dereference")]
     IncompatTagDeref,
     /// read uninitialized memory
+    #[error("undefined memory dereference")]
     UndefMemDeref,
     /// uninitialized memory load
+    #[error("uninitialized memory load")]
     UninitMemLoad,
     /// deref freed stack/heap memory
+    #[error("use after free")]
     UseAfterFree,
 }
 
@@ -255,7 +292,7 @@ fn load_idxs(m: &MVal, idxs: &[Idx]) -> Result<MTree, ExecError> {
     match idxs {
         [] => Ok(MTree::Node(m.clone())),
         [i, idxs@..] => {
-            if *i < 0 || *i as usize >= m.0.len() {
+            if *i < 0 || m.0.len() <= *i as usize {
                 return Err(ExecError::OOBIndexDeref);
             }
 
@@ -426,7 +463,7 @@ fn runtime_call(ty: &ast::Ty, func: &ast::Gid, args: &[SVal], config: &Config, n
     let load_strptr = |p: &Ptr| if let MTree::Str(s) = load_ptr(config, p)? {
         Ok(s)
     } else {
-        panic!("runtime_call: non string-ptr arg")
+        panic!("runtime_call: non-string ptr arg")
     };
 
     match (ty, &**func, args) {
@@ -475,7 +512,7 @@ fn interp_call(prog: &ast::Prog, ty: &ast::Ty, func_name: &ast::Gid, args: &[SVa
         panic!("interp_call: wrong no. arguments for {func_name}");
     }
 
-    let locals: Locals = func.params.iter().cloned().zip(args.iter().cloned()).collect();
+    let locals = Locals(func.params.iter().cloned().zip(args.iter().cloned()).collect());
     let mut new_config = config.clone();
     new_config.stack.insert(next_id(), MVal(vec![]));
     interp_cfg(prog, &func.cfg, &locals, &new_config, next_id)

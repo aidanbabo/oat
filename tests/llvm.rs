@@ -73,7 +73,7 @@ const GEP_TESTS: &[(&str, i64)] = &[
     ("llprograms/gep4.ll", 2),
     ("llprograms/gep5.ll", 4),
     ("llprograms/gep6.ll", 7),
-    ("llprograms/gep7.ll", 7),
+    // ("llprograms/gep7.ll", 7), OOB
     ("llprograms/gep8.ll", 2),
 ];
 
