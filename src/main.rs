@@ -26,6 +26,6 @@ fn main() {
     } else {
         println!("{prog:?}");
     }
-    let r = oat::llvm::interp::interp_prog(&prog, &[]).unwrap();
+    let r = oat::llvm::interp(&prog, &[]).unwrap();
     println!("Program returned {r}");
 }

@@ -1,4 +1,16 @@
 // todo: figure out references and stuff like what the hell ?!?
+// todo: type interning
+// on both of the above:
+//      interning types would be the way to go in terms of actually having a real memory savings
+//      i tried to introduce a 'prog to any type referencing something living in the ast::Prog
+//      but this turned out to introduce more harm than good.
+//      while the program cannot create types at runtime, we do inside of the interpreter
+//      a good example of this is that for load and store instructions we only actually keep one
+//      of the types parsed, so we create the other dynamically at runtime and pass it to operand
+//      evaluation functions. This works out find in the case of the load, as we store the pointer
+//      type and can just deref to get the pointee, but for stores we store the pointee type so we
+//      have to use a box and create a new type. This is even worse for function types as we don't
+//      have the type available when we parse and will always have to create it.
 
 use std::collections::{HashMap, BTreeMap};
 use std::{fmt, ops};
@@ -38,15 +50,7 @@ struct Ptr {
 impl fmt::Display for Ptr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {} ", self.ty, self.bid)?;
-        let mut first = true;
-        for idx in &self.indices {
-            if first {
-                write!(f, "{idx}")?
-               } else {
-                write!(f, ", {idx}")?
-            }
-            first = false;
-        }
+        super::write_separated(f, ", ", &self.indices)?;
         Ok(())
     }
 }
@@ -93,15 +97,7 @@ struct MVal(Vec<MTree>);
 impl fmt::Display for MVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
-        let mut first = true;
-        for t in &self.0 {
-            if first {
-                write!(f, "{t}")?;
-            } else {
-                write!(f, " {t}")?;
-            }
-            first = false;
-        }
+        super::write_separated(f, " ", &self.0)?;
         write!(f, "]")
     }
 }

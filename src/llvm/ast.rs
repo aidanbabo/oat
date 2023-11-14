@@ -129,29 +129,13 @@ impl fmt::Display for Ty {
             Ty::Ptr(t) => write!(f, "{t}*"),
             Ty::Struct(ts) => { 
                 write!(f, "{{ ")?;
-                let mut first = true;
-                for t in ts {
-                    if first {
-                        write!(f, "{t}")?
-                    } else {
-                        write!(f, " {t}")?
-                    }
-                    first = false;
-                }
+                super::write_separated(f, ", ", ts)?;
                 write!(f, " }}")
             }
             Ty::Array(n, t) => write!(f, "[{n} x {t}]"),
             Ty::Fun(ts, t) => {
                 write!(f, "{t} (")?;
-                let mut first = true;
-                for t in ts {
-                    if first {
-                        write!(f, "{t}")?
-                    } else {
-                        write!(f, " {t}")?
-                    }
-                    first = false;
-                }
+                super::write_separated(f, ", ", ts)?;
                 write!(f, ")")
             }
             Ty::Named(name) => write!(f, "%{name}"),
