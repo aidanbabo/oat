@@ -352,33 +352,34 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    // this function is written OCaml style
-    fn store_idxs(m: &MVal, idxs: &[Idx], mt: &MTree) -> Result<MVal, ExecError> {
-        match idxs {
-            [] => Ok(MVal(vec![mt.clone()])),
-            [i, idxs@..] => {
-                if *i < 0 || *i > m.0.len() as i64 {
-                    return Err(ExecError::OOBIndexDeref);
-                }
-                let i = *i as usize;
-
-                match (idxs, &m.0[i]) {
-                    ([], _) => {
-                        let mut new_m = m.clone();
-                        new_m.0[i] = mt.clone();
-                        Ok(new_m)
-                    }
-                    (_, MTree::Word(_)) => panic!("load idxs: attempted to index into word"),
-                    (_, MTree::Str(_)) => panic!("load idxs: attempted to index into word"),
-                    (_, MTree::Node(new_m)) => {
-                        let new_mt = MTree::Node(Self::store_idxs(new_m, idxs, mt)?);
-                        let mut new_m = m.clone();
-                        new_m.0[i] = new_mt;
-                        Ok(new_m)
-                    }
-                }
-            }
+    // this function looks a little weird, I would like to write it
+    // with a loop and not a fold, but the borrow checker better understands
+    // functions/closures than loop iterations, so this is what we are left with
+    fn store_idxs(m: &mut MVal, idxs: &[Idx], mt: &MTree) -> Result<(), ExecError> {
+        if idxs.is_empty() {
+            return Ok(());
         }
+
+        let last_index = idxs.len() - 1;
+        idxs.iter().enumerate().try_fold(m, |m, (iter_idx, i)| {
+            if *i < 0 || *i > m.0.len() as i64 {
+                return Err(ExecError::OOBIndexDeref);
+            }
+            let i = *i as usize;
+
+            if iter_idx == last_index {
+                m.0[i] = mt.clone();
+                return Ok(m);
+            }
+
+            match &mut m.0[i] {
+                MTree::Word(_) => panic!("load idxs: attempted to index into word"),
+                MTree::Str(_) => panic!("load idxs: attempted to index into str"),
+                MTree::Node(m) => Ok(m),
+            }
+        })?;
+
+        Ok(())
     }
 
     fn load_bid(&self, bid: &Bid) -> Result<&MVal, ExecError> {
@@ -395,22 +396,22 @@ impl<'prog> Interpreter<'prog> {
     }
 
     fn store_ptr(&mut self, p: &Ptr, mt: &MTree) -> Result<(), ExecError> {
-        let mval = self.load_bid(&p.bid)?;
+        let mut mval = self.load_bid(&p.bid)?.clone();
         match &p.bid {
             Bid::NullId => return Err(ExecError::NullPtrDeref),
             Bid::HeapId(mid) => {
-                let mval = Self::store_idxs(mval, &p.indices, mt)?;
+                Self::store_idxs(&mut mval, &p.indices, mt)?;
                 self.config.heap.insert(mid.clone(), mval);
                 Ok(())
             }
             Bid::GlobalId(gid) => {
-                let mval = Self::store_idxs(mval, &p.indices, mt)?;
+                Self::store_idxs(&mut mval, &p.indices, mt)?;
                 self.config.globals.insert(gid.clone(), mval);
                 Ok(())
             }
             Bid::StackId(fid) => {
-                let frame = Self::store_idxs(mval, &p.indices, mt)?;
-                self.config.stack.insert(fid.clone(), frame);
+                Self::store_idxs(&mut mval, &p.indices, mt)?;
+                self.config.stack.insert(fid.clone(), mval);
                 Ok(())
             }
         }
