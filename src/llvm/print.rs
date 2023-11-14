@@ -1,5 +1,3 @@
-// todo: simple ptr wrapper so I don't have to allocate when printing
-
 use super::ast::*;
 use std::fmt;
 
@@ -34,6 +32,16 @@ pub(crate) fn write_separated<T, W>(f: &mut W, sep: &str, ts: impl IntoIterator<
     Ok(())
 }
 
+// This is to avoid allocating when printing pointers to types that we
+// create. E.g. load stores the pointee not pointer and we must create it.
+struct Ptr<T>(T);
+
+impl<T: fmt::Display> fmt::Display for Ptr<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}*", self.0)
+    }
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -41,7 +49,7 @@ impl fmt::Display for Ty {
             Ty::I1 => write!(f, "i1"),
             Ty::I8 => write!(f, "i8"),
             Ty::I64 => write!(f, "i64"),
-            Ty::Ptr(t) => write!(f, "{t}*"),
+            Ty::Ptr(t) => write!(f, "{}", Ptr(t)),
             Ty::Struct(ts) => { 
                 write!(f, "{{ ")?;
                 write_separated(f, ", ", ts)?;
@@ -103,8 +111,8 @@ impl fmt::Display for Insn {
         match self {
             Insn::Binop(b, t, o1, o2) => write!(f, "{b} {t} {o1}, {o2}"),
             Insn::Alloca(t) => write!(f, "alloca {t}"),
-            Insn::Load(t, o) => write!(f, "load {t}, {} {o}", Ty::Ptr(Box::new(t.clone()))),
-            Insn::Store(t, os, od) => write!(f, "store {t} {os}, {} {od}", Ty::Ptr(Box::new(t.clone()))),
+            Insn::Load(t, o) => write!(f, "load {t}, {} {o}", Ptr(t)),
+            Insn::Store(t, os, od) => write!(f, "store {t} {os}, {} {od}", Ptr(t)),
             Insn::Icmp(c, t, o1, o2) => write!(f, "icmp {c} {t} {o1}, {o2}"),
             Insn::Call(t, o, oa) => {
                 write!(f, "call {t} {o}(")?;
@@ -121,7 +129,7 @@ impl fmt::Display for Insn {
             }
             Insn::Bitcast(t1, o, t2) => write!(f, "bitcast {t1} {o} to {t2}"),
             Insn::Gep(t, o, oi) => {
-                write!(f, "getelementptr {t}, {} {o}", Ty::Ptr(Box::new(t.clone())))?;
+                write!(f, "getelementptr {t}, {} {o}", Ptr(t))?;
                 for o in oi {
                     match o {
                         Operand::Const(i) => write!(f, ", i32 {i}")?,
