@@ -1,17 +1,27 @@
 use clap::Parser;
 
 use std::path::PathBuf;
+use std::ffi::OsStr;
 use std::fs;
 
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
+    // todo: support multiple files, idk how that will interact with passing args with --execute-asm/x86
+    args: Vec<String>,
     #[arg(long)]
-    pretty: bool,
+    print_ll: bool,
+    #[arg(long)]
+    interp_ll: bool,
 }
 
 fn main() {
     let args = Args::parse();
+    if args.path.extension() != Some(&OsStr::new("ll")) {
+        eprintln!("Only supporting ll files");
+        return;
+    }
+
     let s = fs::read_to_string(&args.path).unwrap();
     let prog = match oat::llvm::parse(&s) {
         Ok(p) => p,
@@ -21,11 +31,13 @@ fn main() {
         }
     };
 
-    if args.pretty {
-        println!("{prog:#?}");
-    } else {
-        println!("{prog:?}");
+    if args.print_ll {
+        oat::llvm::print(&prog);
     }
-    let r = oat::llvm::interp(&prog, &[]).unwrap();
-    println!("Program returned {r}");
+
+    if args.interp_ll {
+        let prog_args: Vec<_> = args.args.iter().map(|s| &**s).collect();
+        let r = oat::llvm::interp(&prog, &prog_args).unwrap();
+        eprintln!("Program returned {r}");
+    }
 }

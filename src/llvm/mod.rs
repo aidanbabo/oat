@@ -1,10 +1,14 @@
+// CHANGES:
+//      load: type is the type being loaded not the type being loaded from
+//      gep: type is not the pointer type but the type listed after the `getelementptr` keyword.
+
 use lalrpop_util::lalrpop_mod;
-use std::fmt;
 
 lalrpop_mod!(parser, "/llvm/parser.rs"); // synthesized by LALRPOP
 pub mod ast;
 pub(crate) mod parser_utils;
 mod interp;
+mod print;
 
 pub use interp::ExecError;
 
@@ -19,18 +23,7 @@ pub fn interp(prog: &ast::Prog, args: &[&str]) -> Result<i64, ExecError> {
     interp::interp_prog(prog, args)
 }
 
-fn write_separated<T, W>(f: &mut W, sep: &str, ts: impl IntoIterator<Item = T>) -> fmt::Result
-    where T: fmt::Display,
-          W: fmt::Write,
-{
-    let mut first = true;
-    for t in ts {
-        if first {
-            write!(f, "{t}")?
-        } else {
-            write!(f, "{sep}{t}")?
-        }
-        first = false;
-    }
-    Ok(())
+pub fn print(prog: &ast::Prog) {
+    print::print(prog)
 }
+

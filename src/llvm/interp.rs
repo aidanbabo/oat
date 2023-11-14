@@ -50,7 +50,7 @@ struct Ptr {
 impl fmt::Display for Ptr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {} ", self.ty, self.bid)?;
-        super::write_separated(f, ", ", &self.indices)?;
+        super::print::write_separated(f, ", ", &self.indices)?;
         Ok(())
     }
 }
@@ -97,7 +97,7 @@ struct MVal(Vec<MTree>);
 impl fmt::Display for MVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
-        super::write_separated(f, " ", &self.0)?;
+        super::print::write_separated(f, " ", &self.0)?;
         write!(f, "]")
     }
 }
@@ -270,15 +270,6 @@ impl<'prog> Interpreter<'prog> {
             t.clone()
         }
     }
-
-    fn dptr(&self, ty: &'prog ast::Ty) -> &'prog ast::Ty {
-        match ty {
-            ast::Ty::Ptr(t) => t,
-            ast::Ty::Named(id) => self.dptr(&self.prog.tdecls[id]),
-            _ => panic!("dptr: not a pointer type"),
-        }
-    }
-
 
     fn interp_bop(b: ast::Bop, v1: SVal, v2: SVal) -> SVal {
         let (i, j) = match (v1, v2) {
@@ -610,8 +601,8 @@ impl<'prog> Interpreter<'prog> {
                     locs.insert(u.clone(), ptr);
                     insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Load(ast::Ty::Ptr(t), o))), _) => {
-                    let mt = match self.interp_operand(&locs, &ast::Ty::Ptr(t.clone()), &o) {
+                (Some((u, ast::Insn::Load(t, o))), _) => {
+                    let mt = match self.interp_operand(&locs, &ast::Ty::Ptr(Box::new(t.clone())), &o) {
                         SVal::Ptr(p) => {
                             if self.effective_type(&self.effective_tag(&p)) != self.effective_type(&t) {
                                 return Err(ExecError::IncompatTagDeref);
@@ -661,8 +652,7 @@ impl<'prog> Interpreter<'prog> {
                     locs.insert(u.clone(), v);
                     insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Gep(ty, o, os))), _) => {
-                    let t = self.dptr(ty);
+                (Some((u, ast::Insn::Gep(t, o, os))), _) => {
                     let idxs: Vec<_> = os.iter()
                         .map(|o| self.interp_operand(&locs, &ast::Ty::I64, o))
                         .map(|sval| {
@@ -698,7 +688,6 @@ impl<'prog> Interpreter<'prog> {
                     block = &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1;
                     insn_idx = 0;
                 }
-                _ => panic!("invalid instructin"),
             }
         }
     }

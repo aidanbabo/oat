@@ -62,7 +62,6 @@ match {
 	"x" => CROSS,
 	r"\d+" => INT,
 	r";([^\n\r])*\n" => {}, // comments
-	r"declare([^\n\r])*\n" => {}, // declare acts as a comment for our IR
 } else {
 	r"[A-Za-z\d_][A-Za-z\d_\.]*" => LBL,
 }
@@ -222,13 +221,13 @@ Cnd: ast::Cnd = {
 Insn: (ast::Uid, ast::Insn) = {
 	<u:UID> EQUALS <b:Bop> <t:Ty> <o1:Operand> COMMA <o2:Operand> => (u, ast::Insn::Binop(b, t, o1, o2)),
 	<u:UID> EQUALS ALLOCA <t:Ty> => (u, ast::Insn::Alloca(t)),
-	<u:UID> EQUALS LOAD Ty COMMA <t:Ty> <o:Operand> => (u, ast::Insn::Load(t, o)),
+	<u:UID> EQUALS LOAD <t:Ty> COMMA Ty <o:Operand> => (u, ast::Insn::Load(t, o)),
 	STORE <t1:Ty> <o1:Operand> COMMA <_t2:Ty> <o2:Operand> => (gensym("store"), ast::Insn::Store(t1, o1, o2)),
 	<u:UID> EQUALS ICMP <c:Cnd> <t:Ty> <o1:Operand> COMMA <o2:Operand> => (u, ast::Insn::Icmp(c, t, o1, o2)),
 	CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (gensym("call"), ast::Insn::Call(t, o, args)),
 	<u:UID> EQUALS CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (u, ast::Insn::Call(t, o, args)),
 	<u:UID> EQUALS BITCAST <t1:Ty> <o:Operand> TO <t2:Ty> => (u, ast::Insn::Bitcast(t1, o, t2)),
-	<u:UID> EQUALS GEP Ty COMMA <t:Ty> <o:Operand> COMMA <os:IOperandList> => (u, ast::Insn::Gep(t, o, os)),
+	<u:UID> EQUALS GEP <t:Ty> COMMA Ty <o:Operand> COMMA <os:IOperandList> => (u, ast::Insn::Gep(t, o, os)),
 };
 
 InsnList: Vec<(ast::Uid, ast::Insn)> = <(Insn)*> => <>;
