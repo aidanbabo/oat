@@ -136,10 +136,10 @@ impl fmt::Display for Locals {
     }
 }
 
-#[derive(Clone)]
 struct Config {
     globals: HashMap<ast::Gid, MVal>,
     heap: HashMap<Mid, MVal>,
+    // basically a stack but with fast lookup, fids are always increasing
     stack: BTreeMap<Fid, MVal>,
 }
 
@@ -326,21 +326,27 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    // this function is written OCaml style
-    fn load_idxs(m: &MVal, idxs: &[Idx]) -> Result<MTree, ExecError> {
-        match idxs {
-            [] => Ok(MTree::Node(m.clone())),
-            [i, idxs@..] => {
-                if *i < 0 || m.0.len() <= *i as usize {
-                    return Err(ExecError::OOBIndexDeref);
-                }
+    fn load_idxs(mut m: &MVal, mut idxs: &[Idx]) -> Result<MTree, ExecError> {
 
-                match (idxs, &m.0[*i as usize]) {
-                    ([], mt) => Ok(mt.clone()),
-                    ([0], MTree::Str(s)) => Ok(MTree::Str(s.clone())),
-                    (_, MTree::Word(_)) => panic!("load idxs: attempted to index into word"),
-                    (_, MTree::Str(_)) => panic!("load idxs: attempted to index into word"),
-                    (_, MTree::Node(m)) => Self::load_idxs(m, idxs),
+        if idxs.is_empty() {
+            return Ok(MTree::Node(m.clone()));
+        }
+
+        loop {
+            let (i, idxs2) = idxs.split_first().unwrap();
+            idxs = idxs2;
+
+            if *i < 0 || m.0.len() <= *i as usize {
+                return Err(ExecError::OOBIndexDeref);
+            }
+
+            match (idxs, &m.0[*i as usize]) {
+                ([], mt) => return Ok(mt.clone()),
+                ([0], MTree::Str(s)) => return Ok(MTree::Str(s.clone())),
+                (_, MTree::Word(_)) => panic!("load idxs: attempted to index into word"),
+                (_, MTree::Str(_)) => panic!("load idxs: attempted to index into str"),
+                (_, MTree::Node(m2)) => {
+                    m = m2;
                 }
             }
         }
@@ -375,17 +381,17 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn load_bid(&self, bid: &Bid) -> Result<MVal, ExecError> {
+    fn load_bid(&self, bid: &Bid) -> Result<&MVal, ExecError> {
         match bid {
             Bid::NullId => return Err(ExecError::NullPtrDeref),
-            Bid::HeapId(mid) => self.config.heap.get(mid).map(Clone::clone).ok_or(ExecError::UseAfterFree),
-            Bid::GlobalId(gid) => Ok(self.config.globals.get(gid).expect("Load: bogus gid").clone()),
-            Bid::StackId(fid) => self.config.stack.get(fid).map(Clone::clone).ok_or(ExecError::UseAfterFree),
+            Bid::HeapId(mid) => self.config.heap.get(mid).ok_or(ExecError::UseAfterFree),
+            Bid::GlobalId(gid) => Ok(self.config.globals.get(gid).expect("Load: bogus gid")),
+            Bid::StackId(fid) => self.config.stack.get(fid).ok_or(ExecError::UseAfterFree),
         }
     }
 
     fn load_ptr(&self, p: &Ptr) -> Result<MTree, ExecError> {
-        Self::load_idxs(&self.load_bid(&p.bid)?, &p.indices)
+        Self::load_idxs(self.load_bid(&p.bid)?, &p.indices)
     }
 
     fn store_ptr(&mut self, p: &Ptr, mt: &MTree) -> Result<(), ExecError> {
@@ -393,17 +399,17 @@ impl<'prog> Interpreter<'prog> {
         match &p.bid {
             Bid::NullId => return Err(ExecError::NullPtrDeref),
             Bid::HeapId(mid) => {
-                let mval = Self::store_idxs(&mval, &p.indices, mt)?;
+                let mval = Self::store_idxs(mval, &p.indices, mt)?;
                 self.config.heap.insert(mid.clone(), mval);
                 Ok(())
             }
             Bid::GlobalId(gid) => {
-                let mval = Self::store_idxs(&mval, &p.indices, mt)?;
+                let mval = Self::store_idxs(mval, &p.indices, mt)?;
                 self.config.globals.insert(gid.clone(), mval);
                 Ok(())
             }
             Bid::StackId(fid) => {
-                let frame = Self::store_idxs(&mval, &p.indices, mt)?;
+                let frame = Self::store_idxs(mval, &p.indices, mt)?;
                 self.config.stack.insert(fid.clone(), frame);
                 Ok(())
             }
@@ -566,31 +572,27 @@ impl<'prog> Interpreter<'prog> {
 
         let locals = Locals(func.params.iter().cloned().zip(args.iter().cloned()).collect());
         let id = self.next_id();
+        // since we always use a higher id, this is effectivly pushing it to the stack
         self.config.stack.insert(id, MVal(vec![]));
         self.interp_cfg(&func.cfg, locals)
     }
 
-    fn interp_cfg(&mut self, cfg: &ast::Cfg, mut locs: Locals) -> Result<SVal, ExecError> {
-        let mut block = &cfg.entry;
-        let mut insn_idx = 0;
-        loop {
-            let insn = block.insns.get(insn_idx);
-            match (insn, &block.term) {
-                (Some((u, ast::Insn::Binop(b, t, o1, o2))), _) => {
+    fn interp_insns(&mut self, locs: &mut Locals, insns: &[(ast::Uid, ast::Insn)]) -> Result<(), ExecError> {
+        for insn in insns {
+            match insn {
+                (u, ast::Insn::Binop(b, t, o1, o2)) => {
                     let v1 = self.interp_operand(&locs, t, o1);
                     let v2 = self.interp_operand(&locs, t, o2);
                     let vr = Self::interp_bop(*b, v1, v2);
                     locs.insert(u.clone(), vr);
-                    insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Icmp(cnd, t, o1, o2))), _) => {
+                (u, ast::Insn::Icmp(cnd, t, o1, o2)) => {
                     let v1 = self.interp_operand(&locs, t, o1);
                     let v2 = self.interp_operand(&locs, t, o2);
                     let vr = Self::interp_cnd(*cnd, v1, v2);
                     locs.insert(u.clone(), vr);
-                    insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Alloca(ty))), _) => {
+                (u, ast::Insn::Alloca(ty)) => {
                     let mut entry = self.config.stack.last_entry().expect("stack empty");
                     let ptr = SVal::Ptr(Ptr {
                         ty: ty.clone(),
@@ -599,9 +601,8 @@ impl<'prog> Interpreter<'prog> {
                     });
                     entry.get_mut().0.push(MTree::Word(SVal::Undef));
                     locs.insert(u.clone(), ptr);
-                    insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Load(t, o))), _) => {
+                (u, ast::Insn::Load(t, o)) => {
                     let mt = match self.interp_operand(&locs, &ast::Ty::Ptr(Box::new(t.clone())), &o) {
                         SVal::Ptr(p) => {
                             if self.effective_type(&self.effective_tag(&p)) != self.effective_type(&t) {
@@ -618,9 +619,8 @@ impl<'prog> Interpreter<'prog> {
                         _ => panic!("load: returned aggregate"),
                     };
                     locs.insert(u.clone(), v);
-                    insn_idx += 1;
                 }
-                (Some((_, ast::Insn::Store(t, os, od))), _) => {
+                (_, ast::Insn::Store(t, os, od)) => {
                     let vs = self.interp_operand(&locs, &t, &os);
                     let vd = self.interp_operand(&locs, &ast::Ty::Ptr(Box::new(t.clone())), &od);
                     match vd {
@@ -633,9 +633,8 @@ impl<'prog> Interpreter<'prog> {
                         SVal::Undef => return Err(ExecError::UndefPtrDeref),
                         SVal::Int(_) => panic!("non-ptr arg for load"),
                     };
-                    insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Call(t, ofn, ato))), _) => {
+                (u, ast::Insn::Call(t, ofn, ato)) => {
                     let ats: Vec<_> = ato.iter().map(|(t, _)| t.clone()).collect();
                     let ft = ast::Ty::Ptr(Box::new(ast::Ty::Fun(ats, Box::new(t.clone()))));
                     let g = match self.interp_operand(&locs, &ft, &ofn) {
@@ -645,14 +644,12 @@ impl<'prog> Interpreter<'prog> {
                     let args: Vec<_> = ato.iter().map(|(t, o)| self.interp_operand(&locs, t, o)).collect();
                     let r = self.interp_call(t, &g, &args)?;
                     locs.insert(u.clone(), r);
-                    insn_idx += 1
                 }
-                (Some((u, ast::Insn::Bitcast(t1, o, _))), _) => {
+                (u, ast::Insn::Bitcast(t1, o, _)) => {
                     let v = self.interp_operand(&locs, &t1, &o);
                     locs.insert(u.clone(), v);
-                    insn_idx += 1;
                 }
-                (Some((u, ast::Insn::Gep(t, o, os))), _) => {
+                (u, ast::Insn::Gep(t, o, os)) => {
                     let idxs: Vec<_> = os.iter()
                         .map(|o| self.interp_operand(&locs, &ast::Ty::I64, o))
                         .map(|sval| {
@@ -668,25 +665,32 @@ impl<'prog> Interpreter<'prog> {
                         SVal::Int(_) => panic!("non-ptr arg for gep {t:?}"),
                     };
                     locs.insert(u.clone(), v);
-                    insn_idx += 1;
                 }
-                (None, (_, ast::Terminator::Ret(_, None))) => {
+            }
+        }
+        Ok(())
+    }
+
+    fn interp_cfg(&mut self, cfg: &ast::Cfg, mut locs: Locals) -> Result<SVal, ExecError> {
+        let mut block = &cfg.entry;
+        loop {
+            self.interp_insns(&mut locs, &block.insns)?;
+            block = match &block.term {
+                (_, ast::Terminator::Ret(_, None)) => {
                     self.config.stack.pop_last();
                     return Ok(SVal::Undef);
                 }
-                (None, (_, ast::Terminator::Ret(t, Some(o)))) => {
+                (_, ast::Terminator::Ret(t, Some(o))) => {
                     self.config.stack.pop_last();
                     return Ok(self.interp_operand(&locs, &t, &o));
                 }
-                (None, (_, ast::Terminator::Br(l))) => {
-                    block = &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1;
-                    insn_idx = 0;
+                (_, ast::Terminator::Br(l)) => {
+                    &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1
                 }
-                (None, (_, ast::Terminator::Cbr(o, l1, l2))) => {
+                (_, ast::Terminator::Cbr(o, l1, l2)) => {
                     let v = self.interp_operand(&locs, &ast::Ty::I1, &o);
                     let l = if Self::interp_i1(&v) { l1 } else { l2 };
-                    block = &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1;
-                    insn_idx = 0;
+                    &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1
                 }
             }
         }
