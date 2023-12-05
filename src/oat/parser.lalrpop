@@ -1,0 +1,62 @@
+// todo: directives
+// todo: nested comments
+
+use crate::oat::ast;
+use crate::oat::parser_utils::escape_string;
+
+grammar;
+
+match {
+	"null" => NULL,
+	"void" => TVOID,
+	"int" => TINT,
+	"bool" => TBOOL,
+	"true" => TRUE,
+	"false" => FALSE,
+	"string" => TSTRING,
+	"else" => ELSE,
+	"if" => IF,
+	"while" => WHILE,
+	"for" => FOR,
+	"return" => RETURN,
+	"var" => VAR,
+	"global" => GLOBAL,
+	"new" => NEW,
+	";" => SEMI,
+	"," => COMMA,
+	"{" => LBRACE,
+	"}" => RBRACE,
+	"*" => STAR,
+	"+" => PLUS,
+	"-" => DASH,
+	"=" => EQ,
+	"==" => EQEQ,
+	"!" => BANG,
+	"~" => TILDE,
+	"(" => LPAREN,
+	")" => RPAREN,
+	"[" => LBRACKET,
+	"]" => RBRACKET,
+	"<<" => SHL,
+	">>" => SHR,
+	">>>" => SAR,
+	"<" => LT,
+	"<=" => LTE,
+	">" => GT,
+	">=" => GTE,
+	"!=" => NEQ,
+	"&" => AND,
+	"|" => OR,
+	"[&]" => IAND,
+	"[|]" => IOR,
+	r"[0-9]+" => INTLIT,
+	r"0x[0-9a-fA-F]+" => HEXINTLIT,
+	r"[a-z][0-9a-zA-z_]*" => IDENT,
+	r#"(".*[^\\]")|("")"# => UNESCAPED_STRING,
+}
+
+// todo:
+pub Prog: ast::Prog = <UNESCAPED_STRING> => {
+	let _ = escape_string(<>);
+	vec![]
+};
