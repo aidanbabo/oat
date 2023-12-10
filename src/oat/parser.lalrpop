@@ -2,7 +2,7 @@
 // todo: nested comments
 
 use crate::oat::ast;
-use crate::oat::parser_utils::escape_string;
+use crate::oat::parser_utils::{escape_string, append};
 
 grammar;
 
@@ -14,16 +14,20 @@ match {
 	"true" => TRUE,
 	"false" => FALSE,
 	"string" => TSTRING,
-	"else" => ELSE,
 	"if" => IF,
+	"if?" => IFQ,
+	"else" => ELSE,
 	"while" => WHILE,
 	"for" => FOR,
 	"return" => RETURN,
 	"var" => VAR,
+	"struct" => STRUCT,
 	"global" => GLOBAL,
 	"new" => NEW,
+	"length" => LENGTH,
 	";" => SEMI,
 	"," => COMMA,
+	"." => DOT,
 	"{" => LBRACE,
 	"}" => RBRACE,
 	"*" => STAR,
@@ -37,26 +41,190 @@ match {
 	")" => RPAREN,
 	"[" => LBRACKET,
 	"]" => RBRACKET,
-	"<<" => SHL,
-	">>" => SHR,
-	">>>" => SAR,
+	"<<" => LTLT,
+	">>" => GTGT,
+	">>>" => GTGTGT,
 	"<" => LT,
-	"<=" => LTE,
+	"<=" => LTEQ,
 	">" => GT,
-	">=" => GTE,
-	"!=" => NEQ,
-	"&" => AND,
-	"|" => OR,
+	">=" => GTEQ,
+	"!=" => BANGEQ,
+	"&" => AMPER,
+	"|" => BAR,
 	"[&]" => IAND,
 	"[|]" => IOR,
+	"->" => ARROW,
+	"?" => QUESTION,
 	r"[0-9]+" => INTLIT,
 	r"0x[0-9a-fA-F]+" => HEXINTLIT,
 	r"[a-z][0-9a-zA-z_]*" => IDENT,
 	r#"(".*[^\\]")|("")"# => UNESCAPED_STRING,
 }
 
-// todo:
-pub Prog: ast::Prog = <UNESCAPED_STRING> => {
-	let _ = escape_string(<>);
-	vec![]
+pub Prog: ast::Prog = {
+	() => vec![],
+	<p:Prog> <d:Decl> => append(p, d),
+};
+
+Decl: ast::Decl = {
+	GLOBAL <name:IDENT> EQ <init:Gexpr> SEMI => ast::Decl::Var(ast::Node::no_loc(ast::Gdecl { name, init })),
+	<ret_ty:RetTy> <name:IDENT> LPAREN <args:ArgList> RPAREN <body:Block> => ast::Decl::Fun(ast::Node::no_loc(ast::Fdecl { ret_ty, name, args, body })),
+	STRUCT <name:IDENT> LBRACE <fields:Separated<SEMI, FieldDecl>> RBRACE => ast::Decl::Type(ast::Node::no_loc(ast::Tdecl { name, fields })),
+};
+
+FieldDecl: ast::Field = <ty:Ty> <name:IDENT> => ast::Field { ty, name };
+
+ArgList = Separated<COMMA, Arg>;
+
+Arg: (ast::Ty, ast::Ident) = <ty:Ty> <id:IDENT> => (ty, id);
+
+Ty: ast::Ty = {
+	TINT => ast::Ty::Int,
+	<RefTy> => ast::Ty::Ref(<>),
+	<RefTy> QUESTION => ast::Ty::NullRef(<>), // needs priority
+	LPAREN <Ty> RPAREN => <>,
+	TBOOL => ast::Ty::Int,
+}
+
+
+
+RetTy: ast::RetTy = {
+	TVOID => ast::RetTy::Void,
+	<Ty> => ast::RetTy::Val(<>),
+}
+
+RefTy: ast::RefTy = {
+	TSTRING => ast::RefTy::String,
+	<Ty> LBRACKET RBRACKET => ast::RefTy::Array(<>),
+	<IDENT> => ast::RefTy::Struct(<>),
+	LPAREN RPAREN ARROW <RetTy> => ast::RefTy::Fun(vec![], Box::new(<>)),
+	LPAREN <ty:Ty> RPAREN ARROW <ret_ty:RetTy> => ast::RefTy::Fun(vec![t], Box::new(ret_ty)),
+	LPAREN <ty:Ty> COMMA <mut tys:Separated<COMMA, Ty>> RPAREN ARROW <ret_ty:RetTy> => {
+		tys.insert(0, ty);
+		ast::RefTy::Fun(tys, Box::new(ret_ty)),
+	}
+}
+
+Uop: ast::Uop = {
+	DASH => ast::Uop::Neg,
+	BANG => ast::Uop::LogNot,
+	TILDE => ast::Uop::BitNot,
+}
+
+Gexpr: ast::Node<ast::Exp> = {
+	<RefTy> NULL => ast::Node::no_loc(ast::Expr::Null(<>)),
+	TRUE => ast::Node::no_loc(ast::Expr::Bool(true)),
+	FALSE => ast::Node::no_loc(ast::Expr::Bool(false)),
+	INTLIT => ast::Node::no_loc(ast::Expr::Int(<>)),
+	UNESCAPED_STRING => ast::Node::no_loc(ast::Expr::Str(<>)),
+	NEW <t:Ty> LBRACKET RBRACKET LBRACE <cs:Separated<COMMA, Gexpr>> RBRACE => ast::Node::no_loc(ast::Expr::ArrElems(ty, cs)),
+	NEW <i:IDENT> LBRACE <cs:Separated<SEMI, Gfield>> RBRACE => ast::Node::no_loc(ast::Expr::Struct(i, fs)),
+	<IDENT> => ast::Node::no_loc(ast::Expr::Id(<>)),
+}
+
+Gfield: (ast::Ident, ast::Node<ast::Expr>) = <id:IDENT> EQ <e:Gexpr> => (<>);
+
+Lhs: ast::Node<ast::Expr> = {
+	<IDENT> => ast::Node::no_loc(ast::Expr::Id(<>)),
+	<e:Expr> LBRACKET <i:Expr> RBRACKET => ast::Node::no_loc(ast::Expr::Index(Box::new(e), Box::new(i))),
+	<e:Expr> DOT <id:IDENT> => ast::Node::no_loc(ast::Expr::Prog(Box::new(e), id)),
+}
+
+Expr: ast::Node<ast::Expr> = {
+	<e1:Expr> IOR <e2:IOr> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::IOr, Box::new(e1), Box::new(e2))),
+	IOr,
+}
+IOr: ast::Node<ast::Expr> = {
+	<e1:IOr> IAND <e2:IAnd> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::IAnd, Box::new(e1), Box::new(e2))),
+	IOr,
+}
+IAnd: ast::Node<ast::Expr> = {
+	<e1:IAnd> BAR <e2:Or> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Or, Box::new(e1), Box::new(e2))),
+	IAnd,
+}
+Or: ast::Node<ast::Expr> = {
+	<e1:Or> AMPER <e2:And> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::And, Box::new(e1), Box::new(e2))),
+	Or,
+}
+And: ast::Node<ast::Expr> = {
+	<e1:And> EQEQ <e2:Eqs> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Eq, Box::new(e1), Box::new(e2))),
+	<e1:And> BANGEQ <e2:Eqs> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Neq, Box::new(e1), Box::new(e2))),
+	And,
+}
+Eqs: ast::Node<ast::Expr> = {
+	<e1:Eqs> LT <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Lt, Box::new(e1), Box::new(e2))),
+	<e1:Eqs> LTEQ <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Lte, Box::new(e1), Box::new(e2))),
+	<e1:Eqs> GT <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Gt, Box::new(e1), Box::new(e2))),
+	<e1:Eqs> GTEQ <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Gte, Box::new(e1), Box::new(e2))),
+	Eqs,
+}
+Cmps: ast::Node<ast::Expr> = {
+	<e1:Cmps> LTLT <e2:Shifts> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Shl, Box::new(e1), Box::new(e2))),
+	<e1:Cmps> GTGT <e2:Shifts> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Shr, Box::new(e1), Box::new(e2))),
+	<e1:Cmps> GTGTGT <e2:Shifts> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Sar, Box::new(e1), Box::new(e2))),
+	Cmps,
+}
+Shifts: ast::Node<ast::Expr> = {
+	<e1:Shifts> PLUS <e2:Adds> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Add, Box::new(e1), Box::new(e2))),
+	<e1:Shifts> DASH <e2:Adds> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Sub, Box::new(e1), Box::new(e2))),
+	Shifts,
+}
+Adds: ast::Node<ast::Expr> = {
+	<e1:Adds> STAR <e2:Muls> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Mul, Box::new(e1), Box::new(e2))),
+	<u:Uop> <e:Expr> => ast::Node::no_loc(ast::Expr::Uop(u, Box::new(e))),
+	Adds,
+}
+Muls: ast::Node<ast::Expr> = {
+	<e:Muls> DOT <id:IDENT> => ast::Node::no_loc(ast::Expr::Proj(Box::new(e), id)),
+	<e:Muls> LBRACKET <i:Calls> RBRACKET => ast::Node::no_loc(ast::Expr::Index(Box::new(e), Box::new(i))),
+	<e:Muls> LPAREN <es:Separated<COMMA, Calls>> RPAREN => ast::Node::no_loc(ast::Expr::Call(Box::new(e), es)),
+	Muls,
+}
+Calls: ast::Node<ast::Expr> = {
+	<RefTy> NULL => ast::Node::no_loc(ast::Expr::Null(<>)),
+	TRUE => ast::Node::no_loc(ast::Expr::Bool(true)),
+	FALSE => ast::Node::no_loc(ast::Expr::Bool(false)),
+	INTLIT => ast::Node::no_loc(ast::Expr::Int(<>)),
+	UNESCAPED_STRING => ast::Node::no_loc(ast::Expr::Str(<>)),
+	NEW <t:Ty> LBRACKET RBRACKET LBRACE <cs:Separated<COMMA, Expr>> RBRACE => ast::Node::no_loc(ast::Expr::ArrElems(ty, cs)),
+	NEW <t:Ty> LBRACKET <e1:Expr> RBRACKET => ast::Node::no_loc(ast::Expr::ArrLen(ty, Box::new(e1))),
+	NEW <i:IDENT> LBRACE <cs:Separated<SEMI, Field>> RBRACE => ast::Node::no_loc(ast::Expr::Struct(i, fs)),
+	NEW <t:Ty> LBRACKET <e1:Expr> RBRACKET LBRACE <u:IDENT> ARROW <e2:Expr> RBRACE => ast::Node::no_loc(ast::Expr::ArrInit(ty, Box::new(e1), u, Box::new(e2))),
+	<IDENT> => ast::Node::no_loc(ast::Expr::Id(<>)),
+	LENGTH LPAREN <Expr> RPAREN => ast::Node::no_loc(ast::Expr::Length(Box::new(<>))),
+	LPAREN <Expr> RPAREN => <>,
+}
+
+Field: (ast::Ident, ast::Node<ast::Expr>) = <id:IDENT> EQ <e:Expr> => (<>);
+
+Vdecl: (ast::Ident, ast::Node<ast::Expr>) = VAR <id:IDENT> EQ <init:Expr> => (<>);
+
+Stmt: ast::Node<ast::Stmt> = {
+	<d:Vdecl> SEMI => ast::Node::no_loc(ast::Stmt::Decl(d)),
+	<p:Lhs> EQ <e:Expr> SEMI => ast::Node::no_loc(ast::Stmt::Assn(p, e)),
+	<e:Expr> LPAREN <es:Separated<COMMA, Expr>> RPAREN SEMI => ast::Node::no_loc(ast::Stmt::Call(e, es)),
+	<IfStmt> => <>,
+	RETURN SEMI => ast::Node::no_loc(ast::Stmt::Ret(None)),
+	RETURN <Expr> SEMI => ast::Node::no_loc(ast::Stmt::Ret(Some(<>))),
+	WHILE LPAREN <e:Expr> RPAREN <b:Block> => ast::Node::no_loc(ast::Stmt::While(e, b)),
+	FOR LPAREN <ds:Separated<COMMA, Vdecl>> SEMI <e:Expr?> SEMI <s:Stmt?> RPAREN <b:Block> => ast::Node::no_loc(ast::Stmt::For(ds, e, s.map(Box::new), b)),
+}
+
+Block: Vec<Stmt> = LBRACE <Stmt*> RBRACE => <>;
+
+IfStmt: ast::Node<ast::Stmt> = {
+	IF LPAREN <e:Expr> RPAREN <b1:Block> <b2:ElseStmt?> => ast::Node::no_loc(ast::Stmt::If(e, b1, b2.unwrap_or_default())),
+	IFQ LPAREN <r:RefTy> <id:IDENT> EQ <e:Expr> RPAREN <b1:Block> <b2:ElseStmt?> => ast::Node::no_loc(ast::Stmt::IfNull(e, b1, b2.unwrap_or_default())),
+}
+
+ElseStmt: Block = {
+	ELSE <Block> => <>,
+	ELSE <IfStmt> => vec![<>],
+}
+
+Separated<Sep, T>: Vec<T> = {
+    <v:(<T> Sep)*> <e:T?> => match e {
+        None => v,
+        Some(e) => append(v, e),
+    }
 };
