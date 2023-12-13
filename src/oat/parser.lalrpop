@@ -2,7 +2,7 @@
 // todo: nested comments
 
 use crate::oat::ast;
-use crate::oat::parser_utils::{escape_string, append};
+use crate::oat::parser_utils::escape_string;
 
 grammar;
 
@@ -61,32 +61,25 @@ match {
 	r#"(".*[^\\]")|("")"# => UNESCAPED_STRING,
 }
 
-pub Prog: ast::Prog = {
-	() => vec![],
-	<p:Prog> <d:Decl> => append(p, d),
-};
+pub Prog: ast::Prog = <Decl*> => <>;
 
 Decl: ast::Decl = {
 	GLOBAL <name:IDENT> EQ <init:Gexpr> SEMI => ast::Decl::Var(ast::Node::no_loc(ast::Gdecl { name, init })),
-	<ret_ty:RetTy> <name:IDENT> LPAREN <args:ArgList> RPAREN <body:Block> => ast::Decl::Fun(ast::Node::no_loc(ast::Fdecl { ret_ty, name, args, body })),
+	<ret_ty:RetTy> <name:IDENT> LPAREN <args:Separated<COMMA, Arg>> RPAREN <body:Block> => ast::Decl::Fun(ast::Node::no_loc(ast::Fdecl { ret_ty, name, args, body })),
 	STRUCT <name:IDENT> LBRACE <fields:Separated<SEMI, FieldDecl>> RBRACE => ast::Decl::Type(ast::Node::no_loc(ast::Tdecl { name, fields })),
 };
 
-FieldDecl: ast::Field = <ty:Ty> <name:IDENT> => ast::Field { ty, name };
+FieldDecl: ast::Field = <ty:Ty> <name:IDENT> => ast::Field { <> };
 
-ArgList = Separated<COMMA, Arg>;
-
-Arg: (ast::Ty, ast::Ident) = <ty:Ty> <id:IDENT> => (ty, id);
+Arg: (ast::Ty, ast::Ident) = <Ty> <IDENT> => (<>);
 
 Ty: ast::Ty = {
 	TINT => ast::Ty::Int,
 	<RefTy> => ast::Ty::Ref(<>),
-	<RefTy> QUESTION => ast::Ty::NullRef(<>), // needs priority
+	<RefTy> QUESTION => ast::Ty::NullRef(<>),
 	LPAREN <Ty> RPAREN => <>,
-	TBOOL => ast::Ty::Int,
+	TBOOL => ast::Ty::Bool,
 }
-
-
 
 RetTy: ast::RetTy = {
 	TVOID => ast::RetTy::Void,
@@ -130,57 +123,8 @@ Lhs: ast::Node<ast::Expr> = {
 	<e:Expr> DOT <id:IDENT> => ast::Node::no_loc(ast::Expr::Prog(Box::new(e), id)),
 }
 
-Expr: ast::Node<ast::Expr> = {
-	<e1:Expr> IOR <e2:IOr> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::IOr, Box::new(e1), Box::new(e2))),
-	IOr,
-}
-IOr: ast::Node<ast::Expr> = {
-	<e1:IOr> IAND <e2:IAnd> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::IAnd, Box::new(e1), Box::new(e2))),
-	IOr,
-}
-IAnd: ast::Node<ast::Expr> = {
-	<e1:IAnd> BAR <e2:Or> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Or, Box::new(e1), Box::new(e2))),
-	IAnd,
-}
-Or: ast::Node<ast::Expr> = {
-	<e1:Or> AMPER <e2:And> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::And, Box::new(e1), Box::new(e2))),
-	Or,
-}
-And: ast::Node<ast::Expr> = {
-	<e1:And> EQEQ <e2:Eqs> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Eq, Box::new(e1), Box::new(e2))),
-	<e1:And> BANGEQ <e2:Eqs> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Neq, Box::new(e1), Box::new(e2))),
-	And,
-}
-Eqs: ast::Node<ast::Expr> = {
-	<e1:Eqs> LT <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Lt, Box::new(e1), Box::new(e2))),
-	<e1:Eqs> LTEQ <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Lte, Box::new(e1), Box::new(e2))),
-	<e1:Eqs> GT <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Gt, Box::new(e1), Box::new(e2))),
-	<e1:Eqs> GTEQ <e2:Cmps> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Gte, Box::new(e1), Box::new(e2))),
-	Eqs,
-}
-Cmps: ast::Node<ast::Expr> = {
-	<e1:Cmps> LTLT <e2:Shifts> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Shl, Box::new(e1), Box::new(e2))),
-	<e1:Cmps> GTGT <e2:Shifts> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Shr, Box::new(e1), Box::new(e2))),
-	<e1:Cmps> GTGTGT <e2:Shifts> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Sar, Box::new(e1), Box::new(e2))),
-	Cmps,
-}
-Shifts: ast::Node<ast::Expr> = {
-	<e1:Shifts> PLUS <e2:Adds> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Add, Box::new(e1), Box::new(e2))),
-	<e1:Shifts> DASH <e2:Adds> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Sub, Box::new(e1), Box::new(e2))),
-	Shifts,
-}
-Adds: ast::Node<ast::Expr> = {
-	<e1:Adds> STAR <e2:Muls> => ast::Node::no_loc(ast::Expr::Bop(ast::Bop::Mul, Box::new(e1), Box::new(e2))),
-	<u:Uop> <e:Expr> => ast::Node::no_loc(ast::Expr::Uop(u, Box::new(e))),
-	Adds,
-}
-Muls: ast::Node<ast::Expr> = {
-	<e:Muls> DOT <id:IDENT> => ast::Node::no_loc(ast::Expr::Proj(Box::new(e), id)),
-	<e:Muls> LBRACKET <i:Calls> RBRACKET => ast::Node::no_loc(ast::Expr::Index(Box::new(e), Box::new(i))),
-	<e:Muls> LPAREN <es:Separated<COMMA, Calls>> RPAREN => ast::Node::no_loc(ast::Expr::Call(Box::new(e), es)),
-	Muls,
-}
-Calls: ast::Node<ast::Expr> = {
+Expr: ast::Node<ast::Exp> = {
+	#[precedence(level="0")]
 	<RefTy> NULL => ast::Node::no_loc(ast::Expr::Null(<>)),
 	TRUE => ast::Node::no_loc(ast::Expr::Bool(true)),
 	FALSE => ast::Node::no_loc(ast::Expr::Bool(false)),
@@ -191,7 +135,40 @@ Calls: ast::Node<ast::Expr> = {
 	NEW <i:IDENT> LBRACE <cs:Separated<SEMI, Field>> RBRACE => ast::Node::no_loc(ast::Expr::Struct(i, fs)),
 	NEW <t:Ty> LBRACKET <e1:Expr> RBRACKET LBRACE <u:IDENT> ARROW <e2:Expr> RBRACE => ast::Node::no_loc(ast::Expr::ArrInit(ty, Box::new(e1), u, Box::new(e2))),
 	<IDENT> => ast::Node::no_loc(ast::Expr::Id(<>)),
+	<u:Uop> <e:Expr> => ast::Node::no_loc(ast::Expr::Uop(u, Box::new(e))),
 	LENGTH LPAREN <Expr> RPAREN => ast::Node::no_loc(ast::Expr::Length(Box::new(<>))),
+	#[precedence(level="1")]
+	#[assoc(side="left")]
+	<l:Expr> IOR <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::IOr, Box::new(l), Box::new(r))),
+	#[precedence(level="2")]
+	<l:Expr> IAND <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::IAnd, Box::new(l), Box::new(r))),
+	#[precedence(level="3")]
+	<l:Expr> BAR <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Or, Box::new(l), Box::new(r))),
+	#[precedence(level="4")]
+	<l:Expr> AMPER <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::And, Box::new(l), Box::new(r))),
+	#[precedence(level="5")]
+	<l:Expr> EQEQ <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Eq, Box::new(l), Box::new(r))),
+	<l:Expr> BANGEQ <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Neq, Box::new(l), Box::new(r))),
+	#[precedence(level="6")]
+	<l:Expr> LT <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Lt, Box::new(l), Box::new(r))),
+	<l:Expr> LTEQ <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Lte, Box::new(l), Box::new(r))),
+	<l:Expr> GT <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Gt, Box::new(l), Box::new(r))),
+	<l:Expr> GTEQ <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Gte, Box::new(l), Box::new(r))),
+	#[precedence(level="7")]
+	<l:Expr> LTLT <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Shl, Box::new(l), Box::new(r))),
+	<l:Expr> GTGT <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Shr, Box::new(l), Box::new(r))),
+	<l:Expr> GTGTGT <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Sar, Box::new(l), Box::new(r))),
+	#[precedence(level="8")]
+	<l:Expr> PLUS <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Add, Box::new(l), Box::new(r))),
+	<l:Expr> DASH <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Sub, Box::new(l), Box::new(r))),
+	#[precedence(level="9")]
+	<l:Expr> STAR <r:Expr> => ast::Node::no_loc(ast::Expr::Binop(ast::Bop::Mul, Box::new(l), Box::new(r))),
+	#[precedence(level="10")]
+	<e:Expr> DOT <id:IDENT> => ast::Node::no_loc(ast::Expr::Proj(Box::new(e), id)),
+	#[precedence(level="11")]
+	<e:Expr> LBRACKET <i:Expr> RBRACKET => ast::Node::no_loc(ast::Expr::Index(Box::new(e), Box::new(i))),
+	<e:Expr> LPAREN <es:Separated<COMMA, Expr>> RPAREN => ast::Node::no_loc(ast::Expr::Call(Box::new(e), es)),
+	#[precedence(level="12")]
 	LPAREN <Expr> RPAREN => <>,
 }
 
@@ -204,8 +181,7 @@ Stmt: ast::Node<ast::Stmt> = {
 	<p:Lhs> EQ <e:Expr> SEMI => ast::Node::no_loc(ast::Stmt::Assn(p, e)),
 	<e:Expr> LPAREN <es:Separated<COMMA, Expr>> RPAREN SEMI => ast::Node::no_loc(ast::Stmt::Call(e, es)),
 	<IfStmt> => <>,
-	RETURN SEMI => ast::Node::no_loc(ast::Stmt::Ret(None)),
-	RETURN <Expr> SEMI => ast::Node::no_loc(ast::Stmt::Ret(Some(<>))),
+	RETURN <Expr?> SEMI => ast::Node::no_loc(ast::Stmt::Ret(<>)),
 	WHILE LPAREN <e:Expr> RPAREN <b:Block> => ast::Node::no_loc(ast::Stmt::While(e, b)),
 	FOR LPAREN <ds:Separated<COMMA, Vdecl>> SEMI <e:Expr?> SEMI <s:Stmt?> RPAREN <b:Block> => ast::Node::no_loc(ast::Stmt::For(ds, e, s.map(Box::new), b)),
 }
@@ -214,7 +190,7 @@ Block: Vec<Stmt> = LBRACE <Stmt*> RBRACE => <>;
 
 IfStmt: ast::Node<ast::Stmt> = {
 	IF LPAREN <e:Expr> RPAREN <b1:Block> <b2:ElseStmt?> => ast::Node::no_loc(ast::Stmt::If(e, b1, b2.unwrap_or_default())),
-	IFQ LPAREN <r:RefTy> <id:IDENT> EQ <e:Expr> RPAREN <b1:Block> <b2:ElseStmt?> => ast::Node::no_loc(ast::Stmt::IfNull(e, b1, b2.unwrap_or_default())),
+	IFQ LPAREN <r:RefTy> <id:IDENT> EQ <e:Expr> RPAREN <b1:Block> <b2:ElseStmt?> => ast::Node::no_loc(ast::Stmt::IfNull(r, id, e, b1, b2.unwrap_or_default())),
 }
 
 ElseStmt: Block = {
