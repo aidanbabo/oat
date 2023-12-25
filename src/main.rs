@@ -15,7 +15,7 @@ struct Args {
     interp_ll: bool,
 }
 
-fn main() {
+fn ll_main() {
     let args = Args::parse();
     if args.path.extension() != Some(&OsStr::new("ll")) {
         eprintln!("Only supporting ll files");
@@ -40,4 +40,23 @@ fn main() {
         let r = oat::llvm::interp(&prog, &prog_args).unwrap();
         eprintln!("Program returned {r}");
     }
+}
+
+fn main() {
+    let args = Args::parse();
+    if args.path.extension() != Some(&OsStr::new("oat")) {
+        eprintln!("Only supporting oat files");
+        return;
+    }
+
+    let s = fs::read_to_string(&args.path).unwrap();
+    let prog = match oat::oat::parse(&s) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return;
+        }
+    };
+
+    println!("{prog:?}");
 }

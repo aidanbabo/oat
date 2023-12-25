@@ -1,9 +1,11 @@
 /// Row column pairs
+#[derive(Debug)]
 pub struct Range {
     pub start: (usize, usize),
     pub end: (usize, usize),
 }
 
+#[derive(Debug)]
 pub struct Node<T> {
     pub t: T,
     pub loc: Range,
@@ -23,6 +25,7 @@ impl<T> Node<T> {
 
 pub type Ident = String;
 
+#[derive(Debug)]
 pub enum Ty {
     Bool,
     Int,
@@ -30,6 +33,7 @@ pub enum Ty {
     NullRef(Box<RefTy>),
 }
 
+#[derive(Debug)]
 pub enum RefTy {
     String,
     Struct(Ident),
@@ -37,17 +41,20 @@ pub enum RefTy {
     Fun(Vec<Ty>, Box<RetTy>),
 }
 
+#[derive(Debug)]
 pub enum RetTy {
     Void,
     Val(Ty),
 }
 
+#[derive(Debug)]
 pub enum Unop {
     Neg,
     LogNot,
     BitNot,
 }
 
+#[derive(Debug)]
 pub enum Binop {
     Add,
     Sub,
@@ -67,6 +74,7 @@ pub enum Binop {
     Sar,
 }
 
+#[derive(Debug)]
 pub enum Exp {
     Null(RefTy),
     Bool(bool),
@@ -86,6 +94,7 @@ pub enum Exp {
     Uop(Unop, Box<Node<Exp>>),
 }
 
+#[derive(Debug)]
 pub struct Vdecl {
     pub name: Ident,
     pub exp: Node<Exp>,
@@ -93,6 +102,7 @@ pub struct Vdecl {
 
 pub type Block = Vec<Node<Stmt>>;
 
+#[derive(Debug)]
 pub enum Stmt {
     Assn(Node<Exp>, Node<Exp>),
     Decl(Vdecl),
@@ -104,11 +114,13 @@ pub enum Stmt {
     While(Node<Exp>, Block),
 }
 
+#[derive(Debug)]
 pub struct Gdecl {
     pub name: Ident,
     pub init: Node<Exp>,
 }
 
+#[derive(Debug)]
 pub struct Fdecl {
     pub ret_ty: RetTy,
     pub name: String,
@@ -116,16 +128,19 @@ pub struct Fdecl {
     pub body: Block,
 }
 
+#[derive(Debug)]
 pub struct Field {
     pub name: Ident,
     pub ty: Ty,
 }
 
+#[derive(Debug)]
 pub struct Tdecl {
     pub name: Ident,
     pub fields: Vec<Field>,
 }
 
+#[derive(Debug)]
 pub enum Decl {
     Var(Node<Gdecl>),
     Fun(Node<Fdecl>),
