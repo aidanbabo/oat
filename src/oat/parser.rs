@@ -1,5 +1,5 @@
 // todo: return result
-pub fn escape_string(s: &str) -> String {
+fn escape_string(s: &str) -> String {
     let mut out = String::new();
 	let mut iter = s.chars();
     while let Some(c) = iter.next() {

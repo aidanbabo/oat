@@ -67,46 +67,46 @@ pub enum Binop {
     Sar,
 }
 
-pub enum Exp {
+pub enum Expr {
     Null(RefTy),
     Bool(bool),
     Int(i64),
     Str(String),
     Id(Ident),
-    ArrElems(Ty, Vec<Node<Exp>>),
-    ArrLen(Ty, Box<Node<Exp>>),
+    ArrElems(Ty, Vec<Node<Expr>>),
+    ArrLen(Ty, Box<Node<Expr>>),
     // todo: name?
-    ArrInit(Ty, Box<Node<Exp>>, Ident, Box<Node<Exp>>),
-    Index(Box<Node<Exp>>, Box<Node<Exp>>),
-    Length(Box<Node<Exp>>),
-    Struct(Ident, Vec<(Ident, Node<Exp>)>),
-    Proj(Box<Node<Exp>>, Ident),
-    Call(Box<Node<Exp>>, Vec<Node<Exp>>),
-    Bop(Binop, Box<Node<Exp>>, Box<Node<Exp>>),
-    Uop(Unop, Box<Node<Exp>>),
+    ArrInit(Ty, Box<Node<Expr>>, Ident, Box<Node<Expr>>),
+    Index(Box<Node<Expr>>, Box<Node<Expr>>),
+    Length(Box<Node<Expr>>),
+    Struct(Ident, Vec<(Ident, Node<Expr>)>),
+    Proj(Box<Node<Expr>>, Ident),
+    Call(Box<Node<Expr>>, Vec<Node<Expr>>),
+    Bop(Binop, Box<Node<Expr>>, Box<Node<Expr>>),
+    Uop(Unop, Box<Node<Expr>>),
 }
 
 pub struct Vdecl {
     pub name: Ident,
-    pub exp: Node<Exp>,
+    pub expr: Node<Expr>,
 }
 
 pub type Block = Vec<Node<Stmt>>;
 
 pub enum Stmt {
-    Assn(Node<Exp>, Node<Exp>),
+    Assn(Node<Expr>, Node<Expr>),
     Decl(Vdecl),
-    Ret(Option<Node<Exp>>),
-    Call(Node<Exp>, Vec<Node<Exp>>),
-    If(Node<Exp>, Block, Block),
-    IfNull(RefTy, Ident, Box<Node<Exp>>, Block, Block),
-    For(Vec<Vdecl>, Option<Node<Exp>>, Option<Box<Node<Stmt>>>, Block),
-    While(Node<Exp>, Block),
+    Ret(Option<Node<Expr>>),
+    Call(Node<Expr>, Vec<Node<Expr>>),
+    If(Node<Expr>, Block, Block),
+    IfNull(RefTy, Ident, Box<Node<Expr>>, Block, Block),
+    For(Vec<Vdecl>, Option<Node<Expr>>, Option<Box<Node<Stmt>>>, Block),
+    While(Node<Expr>, Block),
 }
 
 pub struct Gdecl {
     pub name: Ident,
-    pub init: Node<Exp>,
+    pub init: Node<Expr>,
 }
 
 pub struct Fdecl {
