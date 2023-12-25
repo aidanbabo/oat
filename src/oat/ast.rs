@@ -44,8 +44,8 @@ pub enum RetTy {
 
 pub enum Unop {
     Neg,
-    Lognot,
-    Bitnot,
+    LogNot,
+    BitNot,
 }
 
 pub enum Binop {
