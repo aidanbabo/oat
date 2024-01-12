@@ -53,7 +53,7 @@ fn main() {
     let prog = match oat::oat::parse(&s) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("{e:?}");
             return;
         }
     };

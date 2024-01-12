@@ -1,0 +1,18 @@
+struct A {
+  int x
+}
+
+struct B {
+  A? a  /* can be null */
+}
+
+int program(string[] args) {
+  var b = new B{a=A null};
+  b.a = new A{x = 3};
+  if? (A a2 = b.a) {
+    return a2.x;
+  }
+  b.a = A null;
+  return 0;
+}  
+

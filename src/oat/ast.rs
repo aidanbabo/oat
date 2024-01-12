@@ -25,26 +25,26 @@ impl<T> Node<T> {
 
 pub type Ident = String;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Ty {
     Bool,
     Int,
-    Ref(Box<RefTy>),
-    NullRef(Box<RefTy>),
+    Ref(RefTy),
+    NullRef(RefTy),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RefTy {
     String,
     Struct(Ident),
-    Array(Ty),
-    Fun(Vec<Ty>, Box<RetTy>),
+    Array(Box<Ty>),
+    Fun(Vec<Ty>, RetTy),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RetTy {
     Void,
-    Val(Ty),
+    Val(Box<Ty>),
 }
 
 #[derive(Debug)]

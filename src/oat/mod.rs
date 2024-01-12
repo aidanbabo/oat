@@ -1,12 +1,12 @@
-use lalrpop_util::lalrpop_mod;
-
-lalrpop_mod!(parser, "/oat/parser.rs"); // synthesized by LALRPOP
 pub mod ast;
-mod parser_utils;
+mod lexer;
+mod parser;
 
-pub type ParseError<'a> = lalrpop_util::ParseError<usize, lalrpop_util::lexer::Token<'a>, &'static str>;
-pub type ParseResult<'a, T> = Result<T, ParseError<'a>>;
-
-pub fn parse(input: &str) -> ParseResult<ast::Prog> {
-    parser::ProgParser::new().parse(input)
+pub fn parse(input: &str) -> Result<ast::Prog, ()> {
+    let mut l = lexer::Lexer::new(input);
+    let tokens = l.lex_all();
+    for t in &tokens {
+        println!("{t:?}");
+    }
+    Err(())
 }

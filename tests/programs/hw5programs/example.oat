@@ -1,0 +1,13 @@
+int f() {
+  var x = int[] null;
+  x = new int[] {3,4};
+  if? (int[] y = x) {
+    return y[0];
+  }
+  return 0;
+}
+
+int g() {
+  var x = new int[]{3, 4};
+  return x[0];
+}
