@@ -1,3 +1,5 @@
+use super::Range;
+
 use std::iter::Peekable;
 use std::str::CharIndices;
 use std::collections::HashMap;
@@ -28,23 +30,23 @@ static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
 
 #[derive(Clone, Debug)]
 pub struct Token {
-    pub start: (usize, usize),
-    pub end: (usize, usize),
+    pub loc: Range,
     pub kind: TokenKind,
+    pub data: TokenData,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, enum_map::Enum)]
 pub enum TokenKind {
     /// [0-9]+ | 0x[0-9a-fA-F]+
-    IntLit(i64),
+    IntLit,
     /// null
     Null,
     /// a " delimited string
-    String(String),
+    String,
     /// an identifier
-    Ident(String),
+    Ident,
     /// an uppercase identifier (for types)
-    UIdent(String),
+    UIdent,
     /// int
     TInt,
     /// void
@@ -141,12 +143,22 @@ pub enum TokenKind {
     Question,
 }
 
+#[derive(Clone, Debug)]
+pub enum TokenData {
+    Int(i64),
+    String(String),
+    None,
+}
+
 impl Token {
-    fn one_line(kind: TokenKind, line: usize, start: usize, len: usize) -> Token {
+    fn one_line(kind: TokenKind, line: usize, start: usize, len: usize, data: TokenData) -> Token {
         Token {
-            start: (line, start),
-            end: (line, start + len),
+            loc: Range { 
+                start: (line, start),
+                end: (line, start + len),
+            },
             kind,
+            data,
         }
     }
 }
@@ -170,7 +182,7 @@ impl<'input> Lexer<'input> {
 
     fn single(&mut self, kind: TokenKind) -> Token {
         let (i, _) = self.chars.next().unwrap();
-        Token::one_line(kind, self.line, i - self.line_start, 1)
+        Token::one_line(kind, self.line, i - self.line_start, 1, TokenData::None)
     }
 
     fn maybe_double(&mut self, single_kind: TokenKind, second_char: char, double_kind: TokenKind) -> Token {
@@ -183,7 +195,7 @@ impl<'input> Lexer<'input> {
             _ => (single_kind, 1)
         };
 
-        Token::one_line(kind, self.line, i - self.line_start, len)
+        Token::one_line(kind, self.line, i - self.line_start, len, TokenData::None)
     }
 
     fn integer(&mut self) -> Token {
@@ -223,7 +235,7 @@ impl<'input> Lexer<'input> {
             }
         }
 
-        Token::one_line(TokenKind::IntLit(num), self.line, start - self.line_start, end + 1 - start)
+        Token::one_line(TokenKind::IntLit, self.line, start - self.line_start, end + 1 - start, TokenData::Int(num))
     }
 
     fn any_ident(&mut self) -> (usize, usize) {
@@ -244,8 +256,7 @@ impl<'input> Lexer<'input> {
     fn uident(&mut self) -> Token {
         let (start, end) = self.any_ident();
         let s = &self.input[start..end];
-        let kind = TokenKind::UIdent(s.to_string());
-        Token::one_line(kind, self.line, start - self.line_start, end - start)
+        Token::one_line(TokenKind::UIdent, self.line, start - self.line_start, end - start, TokenData::String(s.to_string()))
     }
 
     fn ident(&mut self) -> Token {
@@ -261,9 +272,9 @@ impl<'input> Lexer<'input> {
                 _ => kind.clone(),
             }
         } else {
-            TokenKind::Ident(s.to_string())
+            TokenKind::Ident
         };
-        Token::one_line(kind, self.line, start - self.line_start, end - start)
+        Token::one_line(kind, self.line, start - self.line_start, end - start, TokenData::String(s.to_string()))
     }
 
     pub fn lex(&mut self) -> Option<Token> {
@@ -302,7 +313,7 @@ impl<'input> Lexer<'input> {
                         }
                         _ => (TokenKind::Lt, 1)
                     };
-                    Token::one_line(kind, self.line, i, len)
+                    Token::one_line(kind, self.line, i, len, TokenData::None)
                 }
                 Some('>') => {
                     let (i, _) = self.chars.next().unwrap();
@@ -323,7 +334,7 @@ impl<'input> Lexer<'input> {
                         }
                         _ => (TokenKind::Gt, 1)
                     };
-                    Token::one_line(kind, self.line, i, len)
+                    Token::one_line(kind, self.line, i, len, TokenData::None)
                 }
                 Some('&') => self.single(TokenKind::Amper),
                 Some('|') => self.single(TokenKind::Bar),
@@ -350,7 +361,7 @@ impl<'input> Lexer<'input> {
                         }
                         len += 1;
                     }
-                    Token::one_line(kind, self.line, i, len)
+                    Token::one_line(kind, self.line, i, len, TokenData::None)
                 }
                 Some('0'..='9') => self.integer(),
                 Some('a'..='z') => self.ident(),

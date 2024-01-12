@@ -1,31 +1,8 @@
-/// Row column pairs
-#[derive(Debug)]
-pub struct Range {
-    pub start: (usize, usize),
-    pub end: (usize, usize),
-}
-
-#[derive(Debug)]
-pub struct Node<T> {
-    pub t: T,
-    pub loc: Range,
-}
-
-impl<T> Node<T> {
-    pub fn no_loc(t: T) -> Self {
-        Node {
-            loc: Range {
-                start: (0, 0),
-                end: (0, 0),
-            },
-            t,
-        }
-    }
-}
+use super::Node;
 
 pub type Ident = String;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ty {
     pub kind: TyKind,
     pub nullable: bool,
@@ -40,7 +17,7 @@ impl Ty {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TyKind {
     Void,
     Bool,
@@ -58,14 +35,14 @@ impl TyKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Unop {
     Neg,
     LogNot,
     BitNot,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Binop {
     Add,
     Sub,
@@ -85,7 +62,7 @@ pub enum Binop {
     Sar,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Exp {
     Null(Ty),
     Bool(bool),
