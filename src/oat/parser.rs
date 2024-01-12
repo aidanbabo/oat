@@ -44,6 +44,7 @@ pub fn escape_string(s: &str) -> String {
     out
 }
 
+#[derive(Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
     next_token: usize,
@@ -70,7 +71,7 @@ impl Parser {
     }
 
     fn test_next_is(&mut self, kind: &TokenKind) -> bool {
-        !self.peek().is_some_and(|t| &t.kind == kind)
+        self.peek().is_some_and(|t| &t.kind == kind)
     }
 
     fn assert_next_is(&mut self, kind: &TokenKind) -> ParseResult<()> {
@@ -92,8 +93,8 @@ impl Parser {
             }
             self.consume();
         }
-        self.assert_next_is(end);
 
+        self.assert_next_is(end)?;
         Ok(v)
     }
 
@@ -110,75 +111,90 @@ impl Parser {
         todo!()
     }
 
-    fn parse_type(&mut self) -> ParseResult<ast::Ty> {
-        match self.peek().map(|t| &t.kind) {
-            Some(TokenKind::TInt) => {
+    fn parse_any_type(&mut self) -> ParseResult<ast::Ty> {
+        let mut t = match self.peek().map(|t| &t.kind) {
+            Some(TokenKind::TVoid) => {
                 self.consume();
-                Ok(ast::Ty::Int)
+                ast::Ty::non_nullable(ast::TyKind::Void)
             }
             Some(TokenKind::TBool) => {
                 self.consume();
-                Ok(ast::Ty::Bool)
+                ast::Ty::non_nullable(ast::TyKind::Bool)
             }
-            Some(TokenKind::LParen) => {
+            Some(TokenKind::TInt) => {
                 self.consume();
-                let t = self.parse_type()?;
-                self.assert_next_is(&TokenKind::RParen)?;
-                Ok(t)
+                ast::Ty::non_nullable(ast::TyKind::Int)
             }
-            None => Err(ParseError),
-            _ => { 
-                let ref_ty = self.parse_ref_type()?;
-                if let Some(TokenKind::Question) = self.peek().map(|t| &t.kind) {
-                    self.consume();
-                    Ok(ast::Ty::NullRef(ref_ty))
-                } else {
-                    Ok(ast::Ty::Ref(ref_ty))
-                }
-            }
-        }
-    }
-
-    fn parse_ref_type(&mut self) -> ParseResult<ast::RefTy> {
-        match self.peek().map(|t| &t.kind) {
             Some(TokenKind::TString) => {
                 self.consume();
-                Ok(ast::RefTy::String)
+                ast::Ty::non_nullable(ast::TyKind::String)
             }
             Some(TokenKind::UIdent(ty_name)) => {
                 let ty_name = ty_name.clone();
                 self.consume();
-                Ok(ast::RefTy::Struct(ty_name))
+                ast::Ty::non_nullable(ast::TyKind::Struct(ty_name))
             }
             Some(TokenKind::LParen) => {
                 self.consume();
-                let arg_types = self.parse_separated(Self::parse_type, &TokenKind::Comma, &TokenKind::RParen)?;
-                self.assert_next_is(&TokenKind::Arrow)?;
-                let ret_ty = self.parse_ret_type()?;
-                Ok(ast::RefTy::Fun(arg_types, ret_ty))
+                let mut arg_types = self.parse_separated(Self::parse_type, &TokenKind::Comma, &TokenKind::RParen)?;
+                // todo: hack for parenthesized types, would still parse '(int,)' as 'int' even though it is
+                // invalid as a both parenthesized type and function type
+                if arg_types.len() == 1 && !self.test_next_is(&TokenKind::Arrow) {
+                    arg_types.pop().unwrap()
+                } else {
+                    self.assert_next_is(&TokenKind::Arrow)?;
+                    let ret_ty = self.parse_ret_type()?;
+                    ast::Ty::non_nullable(ast::TyKind::Fun(arg_types, Box::new(ret_ty)))
+                }
             }
-            None => Err(ParseError),
-            _ => {
-                let ty = self.parse_type()?;
-                self.assert_next_is(&TokenKind::LBrace)?;
-                self.assert_next_is(&TokenKind::RBrace)?;
-                Ok(ast::RefTy::Array(Box::new(ty)))
+            None => return Err(ParseError),
+            k => unimplemented!("unexpected token kind: {k:?}"),
+        };
+
+        loop {
+            match self.peek().map(|t| &t.kind) {
+                Some(TokenKind::Question) => {
+                    self.consume();
+                    if !t.kind.is_ref() {
+                        panic!("not a ref type");
+                    }
+                    if t.nullable {
+                        panic!("can't make a nullable type nullable as it is not a reference type")
+                    }
+                    t.nullable = true;
+                }
+                Some(TokenKind::LBracket) => {
+                    self.consume();
+                    self.assert_next_is(&TokenKind::RBracket)?;
+                    t = ast::Ty {
+                        nullable: false,
+                        kind: ast::TyKind::Array(Box::new(t)),
+                    };
+                }
+                _ => break,
             }
         }
+        Ok(t)
     }
 
-    fn parse_ret_type(&mut self) -> ParseResult<ast::RetTy> {
-        match self.peek().map(|t| &t.kind) {
-            Some(TokenKind::TVoid) => {
-                self.consume();
-                Ok(ast::RetTy::Void)
-            }
-            None => Err(ParseError),
-            _ => {
-                let t = self.parse_type()?;
-                Ok(ast::RetTy::Val(Box::new(t)))
-            }
+    fn parse_type(&mut self) -> ParseResult<ast::Ty> {
+        let ty = self.parse_any_type()?;
+        if ty.kind == ast::TyKind::Void {
+            return Err(ParseError);
         }
+        Ok(ty)
+    }
+
+    fn parse_ref_type(&mut self) -> ParseResult<ast::Ty> {
+        let ty = self.parse_any_type()?;
+        if !ty.kind.is_ref() {
+            return Err(ParseError);
+        }
+        Ok(ty)
+    }
+
+    fn parse_ret_type(&mut self) -> ParseResult<ast::Ty> {
+        self.parse_any_type()
     }
 }
 
@@ -190,9 +206,24 @@ mod tests {
     // stop relying on lexer
     #[test]
     fn parse_type() {
-        let tokens = crate::oat::lexer::Lexer::new("()->int[]").lex_all();
+        let tokens = crate::oat::lexer::Lexer::new("(()->int[]?)?").lex_all();
         let mut p = Parser::new(tokens);
         let ty = p.parse_type();
-        assert_eq!(ty, Ok(ast::Ty::Ref(ast::RefTy::Fun(vec![], ast::RetTy::Val(Box::new(ast::Ty::Ref(ast::RefTy::Array(Box::new(ast::Ty::Int)))))))));
+        let expected = ast::Ty {
+            nullable: true,
+            kind: ast::TyKind::Fun(
+                vec![],
+                Box::new(ast::Ty {
+                    nullable: true,
+                    kind: ast::TyKind::Array(
+                        Box::new(ast::Ty {
+                            nullable: false,
+                            kind: ast::TyKind::Int,
+                        })
+                    ),
+                }),
+            ),
+        };
+        assert_eq!(ty, Ok(expected))
     }
 }

@@ -26,25 +26,36 @@ impl<T> Node<T> {
 pub type Ident = String;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Ty {
-    Bool,
-    Int,
-    Ref(RefTy),
-    NullRef(RefTy),
+pub struct Ty {
+    pub kind: TyKind,
+    pub nullable: bool,
+}
+
+impl Ty {
+    pub fn non_nullable(kind: TyKind) -> Self {
+        Self {
+            nullable: false,
+            kind,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum RefTy {
+pub enum TyKind {
+    Void,
+    Bool,
+    Int,
     String,
     Struct(Ident),
     Array(Box<Ty>),
-    Fun(Vec<Ty>, RetTy),
+    Fun(Vec<Ty>, Box<Ty>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum RetTy {
-    Void,
-    Val(Box<Ty>),
+impl TyKind {
+    pub fn is_ref(&self) -> bool {
+        use TyKind as Tk;
+        matches!(self, Tk::String | Tk::Struct(..) | Tk::Array(..) | Tk::Fun(..))
+    }
 }
 
 #[derive(Debug)]
@@ -76,7 +87,7 @@ pub enum Binop {
 
 #[derive(Debug)]
 pub enum Exp {
-    Null(RefTy),
+    Null(Ty),
     Bool(bool),
     Int(i64),
     Str(String),
@@ -109,7 +120,7 @@ pub enum Stmt {
     Ret(Option<Node<Exp>>),
     Call(Node<Exp>, Vec<Node<Exp>>),
     If(Node<Exp>, Block, Block),
-    IfNull(RefTy, Ident, Box<Node<Exp>>, Block, Block),
+    IfNull(Ty, Ident, Box<Node<Exp>>, Block, Block),
     For(Vec<Vdecl>, Option<Node<Exp>>, Option<Box<Node<Stmt>>>, Block),
     While(Node<Exp>, Block),
 }
@@ -122,7 +133,7 @@ pub struct Gdecl {
 
 #[derive(Debug)]
 pub struct Fdecl {
-    pub ret_ty: RetTy,
+    pub ret_ty: Ty,
     pub name: String,
     pub args: Vec<(Ty, Ident)>,
     pub body: Block,
