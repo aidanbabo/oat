@@ -301,19 +301,20 @@ impl<'input> Lexer<'input> {
     fn ident(&mut self) -> Token {
         let (start, mut end) = self.any_ident();
         let s = &self.input[start..end];
-        let kind = if let Some(kind) = KEYWORDS.get(s) {
-            match self.chars.peek().map(|(_, c)| c) {
+        let (kind, data) = if let Some(kind) = KEYWORDS.get(s) {
+            let k = match self.chars.peek().map(|(_, c)| c) {
                 Some('?') if *kind == TokenKind::If => {
                     self.chars.next().unwrap();
                     end += 1;
                     TokenKind::Ifq
                 }
                 _ => kind.clone(),
-            }
+            };
+            (k, TokenData::None)
         } else {
-            TokenKind::Ident
+            (TokenKind::Ident, TokenData::String(s.to_string()))
         };
-        Token::one_line(kind, self.line, start - self.line_start, end - start, TokenData::String(s.to_string()))
+        Token::one_line(kind, self.line, start - self.line_start, end - start, data)
     }
 
     fn string(&mut self) -> Token {

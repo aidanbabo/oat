@@ -97,7 +97,7 @@ pub enum Stmt {
     Ret(Option<Node<Exp>>),
     Call(Node<Exp>, Vec<Node<Exp>>),
     If(Node<Exp>, Block, Block),
-    IfNull(Ty, Ident, Box<Node<Exp>>, Block, Block),
+    IfNull(Ty, Ident, Node<Exp>, Block, Block),
     For(Vec<Vdecl>, Option<Node<Exp>>, Option<Box<Node<Stmt>>>, Block),
     While(Node<Exp>, Block),
 }

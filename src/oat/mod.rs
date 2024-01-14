@@ -59,7 +59,8 @@ pub fn parse(input: &str) -> Result<ast::Prog, ()> {
     for t in &tokens {
         println!("{t:?}");
     }
-    let _ = parser::Parser::new(tokens).parse_program().unwrap();
-    Err(())
+    let stmt = parser::Parser::new(tokens).parse_stmt().unwrap();
+    let prog = vec![ast::Decl::Fun(Node::no_loc(ast::Fdecl { ret_ty: ast::Ty { nullable: false, kind: ast::TyKind::Void }, name: "program".to_string(), args: vec![], body: vec![stmt] }))];
+    Ok(prog)
 }
 
