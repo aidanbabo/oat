@@ -198,8 +198,69 @@ impl Parser {
 
 
     pub fn parse_program(&mut self) -> ParseResult<ast::Prog> {
-        let _ = self.parse_stmt();
-        panic!("parseserser");
+        let mut decls = vec![];
+        while let Some(t) = self.peek() {
+            let decl = match t.kind {
+                TokenKind::Global => {
+                    let start = self.consume().unwrap().loc;
+                    let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+                    self.assert_next_is(TokenKind::Eq)?;
+                    let init = self.parse_exp()?; // todo: validate for gexp
+                    let end = self.assert_next_is(TokenKind::Semi)?.loc;
+                    let gdecl = ast::Gdecl {
+                        name,
+                        init,
+                    };
+                    let loc = Range::merge(start, end);
+                    ast::Decl::Var(Node { loc, t: gdecl })
+                },
+                TokenKind::Struct => {
+                    let start = self.consume().unwrap().loc;
+                    let TokenData::String(name) = self.assert_next_is(TokenKind::UIdent)?.data.clone() else { unreachable!() };
+                    self.assert_next_is(TokenKind::LBrace)?;
+                    let (fields, end) = self.parse_separated(Parser::parse_field_decl, TokenKind::Semi, TokenKind::RBrace)?;
+                    let tdecl = ast::Tdecl {
+                        name,
+                        fields,
+                    };
+                    let loc = Range::merge(start, end.loc);
+                    ast::Decl::Type(Node { loc, t: tdecl })
+                },
+                _ => {
+                    let start = t.loc;
+                    let ret_ty = self.parse_ret_type()?;
+                    let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+                    self.assert_next_is(TokenKind::LParen)?;
+                    let (args, _) = self.parse_separated(Parser::parse_type_and_ident, TokenKind::Comma, TokenKind::RParen)?;
+                    let (body, end) = self.parse_block()?;
+                    let fdecl = ast::Fdecl {
+                        ret_ty,
+                        name,
+                        args,
+                        body,
+                    };
+                    let loc = Range::merge(start, end);
+                    ast::Decl::Fun(Node { loc, t: fdecl })
+                }
+            };
+
+            decls.push(decl);
+        }
+        Ok(decls)
+    }
+
+    fn parse_field_decl(&mut self) -> ParseResult<ast::Field> {
+        let (ty, name) = self.parse_type_and_ident()?;
+        Ok(ast::Field {
+            ty,
+            name,
+        })
+    }
+
+    fn parse_type_and_ident(&mut self) -> ParseResult<(ast::Ty, ast::Ident)> {
+        let ty = self.parse_type()?;
+        let TokenData::String(ident) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+        Ok((ty, ident))
     }
 
     pub fn parse_stmt(&mut self) -> ParseResult<Node<ast::Stmt>> {
@@ -414,7 +475,7 @@ impl Parser {
 
     fn parse_new_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
         let new_loc = self.consume().unwrap().loc;
-        let ty = self.parse_type()?;
+        let ty = self.parse_type()?; // todo: fumbles `new int[3]`
         let open = self.consume();
         match open.map(|o| o.kind) {
             Some(TokenKind::LBracket) => {
