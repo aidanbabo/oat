@@ -437,6 +437,39 @@ impl<'input> Lexer<'input> {
                 Some('a'..='z') => self.ident(),
                 Some('A'..='Z') => self.uident(),
                 Some('"') => self.string(),
+                Some('#') => {
+                    let (i, _) = self.chars.peek().unwrap();
+                    if *i == self.line_start {
+                        unimplemented!("directives are unimplemented");
+                    } else {
+                        panic!("directives must be the first thing on the line");
+                    }
+                }
+                Some('/') => {
+                    self.chars.next().unwrap();
+                    self.chars.next().filter(|(_, c)| *c == '*').unwrap();
+                    let mut level = 1;
+                    while level > 0 {
+                        let (i, c) = self.chars.next().expect("eof while in comment");
+                        if c == '*' {
+                            let (_, c2) = self.chars.peek().expect("eof while in comment");
+                            if *c2 == '/' {
+                                level -= 1;
+                                self.chars.next();
+                            }
+                        } else if c == '/' {
+                            let (_, c2) = self.chars.peek().expect("eof while in comment");
+                            if *c2 == '*' {
+                                level += 1;
+                                self.chars.next();
+                            }
+                        } else if c == '\n' {
+                            self.line += 1;
+                            self.line_start = i;
+                        }
+                    }
+                    continue;
+                }
                 None => return None,
                 _ => todo!(),
             };
