@@ -59,6 +59,7 @@ pub fn parse(input: &str) -> Result<ast::Prog, ()> {
     for t in &tokens {
         println!("{t:?}");
     }
+    let _ = parser::Parser::new(tokens).parse_program().unwrap();
     Err(())
 }
 

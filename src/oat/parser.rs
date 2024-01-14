@@ -8,45 +8,6 @@ use once_cell::sync::Lazy;
 pub struct ParseError;
 pub type ParseResult<T> = Result<T, ParseError>;
 
-// todo: return result
-pub fn escape_string(s: &str) -> String {
-    let mut out = String::new();
-	let mut iter = s.chars();
-    while let Some(c) = iter.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-
-        let unescaped = iter.next().expect("escaped character");
-        let escaped = match unescaped {
-            'n' => '\n',
-            't' => '\t',
-            '\\' => '\\',
-            '"' => '"',
-            '\'' => '\'', // huh? why would we need to escape this?
-            f@'0'..='9' => {
-                let s = iter.next().expect("second escaped number");
-                let t = iter.next().expect("third escaped number");
-                if !matches!((s, t), ('0'..='9', '0'..='9')) {
-                    panic!("must be numbers!");
-                }
-                let zero = '0' as u32;
-                let n = (f as u32 - zero) * 100
-                    + (s as u32 - zero) * 10
-                    + (t as u32 - zero) ;
-                if n > 255 {
-                    panic!("illegal escaped character constant");
-                }
-                char::from_u32(n).unwrap()
-            }
-            c => panic!("unrecocgnized escape character: '{c}'"),
-        };
-        out.push(escaped);
-    }
-    out
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Precedence {
@@ -72,7 +33,11 @@ enum Precedence {
     Factor,
     /// ! -
     Unary,
-    /// . ()
+    /// []
+    Index,
+    /// .
+    Proj,
+    /// ()
     Call,
 }
 
@@ -90,7 +55,9 @@ impl Precedence {
             Bitshift => Term,
             Term => Factor,
             Factor => Unary,
-            Unary => Call,
+            Unary => Index,
+            Index => Proj,
+            Proj => Call,
             Call => unreachable!(),
         }
     }
@@ -118,12 +85,12 @@ fn get_rule(kind: TokenKind) -> ParseRule {
         enum_map! { 
             TokenKind::IntLit => ParseRule::new(Precedence::None, Some(Parser::parse_int_lit), None),
             TokenKind::Null => ParseRule::new(Precedence::None, None, None),
-            TokenKind::String => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Ident => ParseRule::new(Precedence::None, None, None),
+            TokenKind::String => ParseRule::new(Precedence::None, Some(Parser::parse_string_lit), None),
+            TokenKind::Ident => ParseRule::new(Precedence::None, Some(Parser::parse_ident), None),
             TokenKind::UIdent => ParseRule::new(Precedence::None, None, None),
-            TokenKind::TInt => ParseRule::new(Precedence::None, None, None),
-            TokenKind::TVoid => ParseRule::new(Precedence::None, None, None),
-            TokenKind::TString => ParseRule::new(Precedence::None, None, None),
+            TokenKind::TInt => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
+            TokenKind::TVoid => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
+            TokenKind::TString => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
             TokenKind::If => ParseRule::new(Precedence::None, None, None),
             TokenKind::Ifq => ParseRule::new(Precedence::None, None, None),
             TokenKind::Else => ParseRule::new(Precedence::None, None, None),
@@ -140,20 +107,20 @@ fn get_rule(kind: TokenKind) -> ParseRule {
             TokenKind::Star => ParseRule::new(Precedence::Factor, None, Some(Parser::parse_binary)),
             TokenKind::EqEq => ParseRule::new(Precedence::Equality, None, Some(Parser::parse_binary)),
             TokenKind::Eq => ParseRule::new(Precedence::None, None, None),
-            TokenKind::LParen => ParseRule::new(Precedence::None, None, None),
+            TokenKind::LParen => ParseRule::new(Precedence::Call, Some(Parser::parse_grouping), Some(Parser::parse_call)),
             TokenKind::RParen => ParseRule::new(Precedence::None, None, None),
-            TokenKind::LBracket => ParseRule::new(Precedence::None, None, None),
+            TokenKind::LBracket => ParseRule::new(Precedence::Index, None, Some(Parser::parse_index)),
             TokenKind::RBracket => ParseRule::new(Precedence::None, None, None),
             TokenKind::Tilde => ParseRule::new(Precedence::None, Some(Parser::parse_unary), None),
             TokenKind::Bang => ParseRule::new(Precedence::None, Some(Parser::parse_unary), None),
             TokenKind::Global => ParseRule::new(Precedence::None, None, None),
             TokenKind::For => ParseRule::new(Precedence::None, None, None),
             TokenKind::TBool => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Length => ParseRule::new(Precedence::None, None, None),
-            TokenKind::True => ParseRule::new(Precedence::None, None, None),
-            TokenKind::False => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Dot => ParseRule::new(Precedence::None, None, None),
-            TokenKind::New => ParseRule::new(Precedence::None, None, None),
+            TokenKind::Length => ParseRule::new(Precedence::None, Some(Parser::parse_length_exp), None),
+            TokenKind::True => ParseRule::new(Precedence::None, Some(Parser::parse_bool_lit), None),
+            TokenKind::False => ParseRule::new(Precedence::None, Some(Parser::parse_bool_lit), None),
+            TokenKind::Dot => ParseRule::new(Precedence::Proj, None, Some(Parser::parse_proj)),
+            TokenKind::New => ParseRule::new(Precedence::None, Some(Parser::parse_new_exp), None),
             TokenKind::Gt => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
             TokenKind::GtEq => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
             TokenKind::Lt => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
@@ -200,19 +167,20 @@ impl Parser {
         t
     }
 
-    fn test_next_is(&mut self, kind: &TokenKind) -> bool {
-        self.peek().is_some_and(|t| &t.kind == kind)
+    fn test_next_is(&mut self, kind: TokenKind) -> bool {
+        self.peek().is_some_and(|t| t.kind == kind)
     }
 
-    fn assert_next_is(&mut self, kind: &TokenKind) -> ParseResult<()> {
-        if !self.consume().is_some_and(|t| &t.kind == kind) {
-            Err(ParseError)
+    fn assert_next_is(&mut self, kind: TokenKind) -> ParseResult<&Token> {
+        let Some(t) = self.consume() else { return Err(ParseError) };
+        if t.kind == kind {
+            Ok(t)
         } else {
-            Ok(())
+            panic!("expected {kind:?} but found {:?}", t.kind);
         }
     }
 
-    fn parse_separated<T>(&mut self, mut parse_fn: impl FnMut(&mut Self) -> ParseResult<T>, sep: &TokenKind, end: &TokenKind) -> ParseResult<Vec<T>> {
+    fn parse_separated<T>(&mut self, mut parse_fn: impl FnMut(&mut Self) -> ParseResult<T>, sep: TokenKind, end: TokenKind) -> ParseResult<(Vec<T>, &Token)> {
         let mut v = vec![];
 
         while !self.test_next_is(end) {
@@ -224,17 +192,19 @@ impl Parser {
             self.consume();
         }
 
-        self.assert_next_is(end)?;
-        Ok(v)
+        let end_token = self.assert_next_is(end)?;
+        Ok((v, end_token))
     }
 
 
     pub fn parse_program(&mut self) -> ParseResult<ast::Prog> {
-        todo!()
+        let _ = self.parse_stmt();
+        Err(ParseError)
     }
 
     pub fn parse_stmt(&mut self) -> ParseResult<ast::Stmt> {
-        todo!()
+        let _ = self.parse_exp();
+        Err(ParseError)
     }
 
     pub fn parse_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
@@ -268,6 +238,138 @@ impl Parser {
         Ok(lhs)
     }
 
+    fn parse_field_exp(&mut self) -> ParseResult<(ast::Ident, Node<ast::Exp>)> {
+        let name = self.assert_next_is(TokenKind::Ident)?;
+        let TokenData::String(name) = name.data.clone() else { unreachable!() };
+        self.assert_next_is(TokenKind::Eq)?;
+        let exp = self.parse_exp()?;
+        Ok((name, exp))
+    }
+
+    fn parse_array_helper(&mut self, starting_loc: Range, ty: ast::Ty) -> ParseResult<Node<ast::Exp>> {
+        // new int[]{1, 2, 3}
+        if self.test_next_is(TokenKind::RBracket) {
+            self.consume();
+            self.assert_next_is(TokenKind::LBrace)?;
+            let (elems, rbrace) = self.parse_separated(Parser::parse_exp, TokenKind::Comma, TokenKind::RBrace)?;
+            let loc = Range::merge(starting_loc, rbrace.loc);
+            return Ok(Node { loc, t: ast::Exp::ArrElems(ty, elems) });
+        }
+
+        // new int[3]
+        let len = self.parse_exp()?;
+        let rbracket_loc = self.assert_next_is(TokenKind::RBracket)?.loc;
+        if !self.test_next_is(TokenKind::LBrace) {
+            let loc = Range::merge(starting_loc, rbracket_loc);
+            return Ok(Node { loc, t: ast::Exp::ArrLen(ty, Box::new(len)) });
+        }
+
+        // new int[3]{ i -> i * i }
+        self.consume();
+        let ident = self.assert_next_is(TokenKind::Ident)?;
+        let TokenData::String(name) = ident.data.clone() else { unreachable!() };
+        self.assert_next_is(TokenKind::Arrow)?;
+        let exp = self.parse_exp()?;
+        let rbrace_loc = self.assert_next_is(TokenKind::RBrace)?.loc;
+        let loc = Range::merge(starting_loc, rbrace_loc);
+        Ok(Node { loc, t: ast::Exp::ArrInit(ty, Box::new(len), name, Box::new(exp)) })
+    }
+
+    fn parse_new_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let new_loc = self.consume().unwrap().loc;
+        let ty = self.parse_type()?;
+        let open = self.consume();
+        match open.map(|o| o.kind) {
+            Some(TokenKind::LBracket) => {
+                self.parse_array_helper(new_loc, ty)
+            }
+            Some(TokenKind::LBrace) => {
+                let ast::TyKind::Struct(name) = ty.kind else {
+                    panic!("expected a struct name in struct new expression")
+                };
+                if ty.nullable {
+                    panic!("expected a struct name not a nullable struct type")
+                }
+                let (fields, rparen) = self.parse_separated(Parser::parse_field_exp, TokenKind::Semi, TokenKind::LBrace)?;
+                let loc = Range::merge(new_loc, rparen.loc);
+                Ok(Node { loc, t: ast::Exp::Struct(name, fields) })
+            }
+            None => panic!("parsing failed in the middle of new expression"),
+            _ => panic!("expected '{{' for a new class instance or '[' for a new array")
+        }
+    }
+
+    fn parse_length_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let length_loc = self.consume().unwrap().loc;
+        self.assert_next_is(TokenKind::LParen)?;
+        let e = self.parse_exp()?;
+        let rparen = self.assert_next_is(TokenKind::LParen)?;
+        let loc = Range::merge(length_loc, rparen.loc);
+        Ok(Node { loc, t: ast::Exp::Length(Box::new(e)) })
+    }
+
+    fn parse_null_ptr(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let start_loc = self.peek().unwrap().loc;
+        let ty = self.parse_type()?;
+        let null = self.assert_next_is(TokenKind::Null)?;
+        let loc = Range::merge(start_loc, null.loc);
+        Ok(Node { loc, t: ast::Exp::Null(ty) })
+    }
+
+    fn parse_call(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
+        self.consume().unwrap();
+        let (args, rparen) = self.parse_separated(Parser::parse_exp, TokenKind::Comma, TokenKind::RParen)?;
+        let loc = Range::merge(lhs.loc, rparen.loc);
+        Ok(Node { loc, t: ast::Exp::Call(Box::new(lhs), args) })
+    }
+
+    fn parse_index(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
+        self.consume().unwrap();
+        let index = self.parse_exp()?;
+        let rbracket = self.assert_next_is(TokenKind::RBracket)?;
+        let loc = Range::merge(lhs.loc, rbracket.loc);
+        Ok(Node { loc, t: ast::Exp::Index(Box::new(lhs), Box::new(index)) })
+    }
+
+    fn parse_proj(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
+        self.consume().unwrap();
+        let field = self.assert_next_is(TokenKind::Ident)?;
+        let TokenData::String(field_name) = &field.data else { unreachable!() };
+        let loc = Range::merge(lhs.loc, field.loc);
+        Ok(Node { loc, t: ast::Exp::Proj(Box::new(lhs), field_name.clone()) })
+    }
+
+    // todo: this may also be a null function type (e.g. ()->int null)
+    fn parse_grouping(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let lparen_loc = self.consume().unwrap().loc;
+        let e = self.parse_exp()?;
+        let rparen_loc = self.assert_next_is(TokenKind::RParen)?.loc;
+        let loc = Range::merge(lparen_loc, rparen_loc);
+        Ok(Node { loc, t: e.t })
+    }
+
+    fn parse_ident(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let ident = self.consume().unwrap();
+        let TokenData::String(s) = &ident.data else { unreachable!() };
+        Ok(Node { loc: ident.loc, t: ast::Exp::Id(s.clone()) })
+    }
+
+    fn parse_string_lit(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let string_lit = self.consume().unwrap();
+        let TokenData::String(s) = &string_lit.data else { unreachable!() };
+        Ok(Node { loc: string_lit.loc, t: ast::Exp::Str(s.clone()) })
+    }
+
+    fn parse_bool_lit(&mut self) -> ParseResult<Node<ast::Exp>> {
+        let bool_lit = self.consume().unwrap();
+        let val = match bool_lit.kind {
+            TokenKind::True => true,
+            TokenKind::False => false,
+            _ => unreachable!(),
+        };
+        Ok(Node { loc: bool_lit.loc, t: ast::Exp::Bool(val) })
+    }
+
     fn parse_int_lit(&mut self) -> ParseResult<Node<ast::Exp>> {
         let int_lit = self.consume().unwrap();
         let TokenData::Int(val) = int_lit.data else { unreachable!() };
@@ -293,7 +395,6 @@ impl Parser {
         let binop_kind = self.consume().unwrap().kind;
         let rule = get_rule(binop_kind);
         let rhs = self.parse_precedence(rule.precedence.next())?;
-        // todo: move to previous function?
         let binop = match binop_kind {
             TokenKind::IOr => ast::Binop::IOr,
             TokenKind::IAnd => ast::Binop::IAnd,
@@ -342,13 +443,13 @@ impl Parser {
             }
             Some(TokenKind::LParen) => {
                 self.consume();
-                let mut arg_types = self.parse_separated(Self::parse_type, &TokenKind::Comma, &TokenKind::RParen)?;
+                let (mut arg_types, _) = self.parse_separated(Self::parse_type, TokenKind::Comma, TokenKind::RParen)?;
                 // todo: hack for parenthesized types, would still parse '(int,)' as 'int' even though it is
                 // invalid as a both parenthesized type and function type
-                if arg_types.len() == 1 && !self.test_next_is(&TokenKind::Arrow) {
+                if arg_types.len() == 1 && !self.test_next_is(TokenKind::Arrow) {
                     arg_types.pop().unwrap()
                 } else {
-                    self.assert_next_is(&TokenKind::Arrow)?;
+                    self.assert_next_is(TokenKind::Arrow)?;
                     let ret_ty = self.parse_ret_type()?;
                     ast::Ty::non_nullable(ast::TyKind::Fun(arg_types, Box::new(ret_ty)))
                 }
@@ -371,7 +472,7 @@ impl Parser {
                 }
                 Some(TokenKind::LBracket) => {
                     self.consume();
-                    self.assert_next_is(&TokenKind::RBracket)?;
+                    self.assert_next_is(TokenKind::RBracket)?;
                     t = ast::Ty {
                         nullable: false,
                         kind: ast::TyKind::Array(Box::new(t)),

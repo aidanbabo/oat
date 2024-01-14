@@ -163,6 +163,45 @@ impl Token {
     }
 }
 
+// todo: return result
+pub fn escape_string(s: &str) -> String {
+    let mut out = String::new();
+	let mut iter = s.chars();
+    while let Some(c) = iter.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+
+        let unescaped = iter.next().expect("escaped character");
+        let escaped = match unescaped {
+            'n' => '\n',
+            't' => '\t',
+            '\\' => '\\',
+            '"' => '"',
+            '\'' => '\'', // huh? why would we need to escape this?
+            f@'0'..='9' => {
+                let s = iter.next().expect("second escaped number");
+                let t = iter.next().expect("third escaped number");
+                if !matches!((s, t), ('0'..='9', '0'..='9')) {
+                    panic!("must be numbers!");
+                }
+                let zero = '0' as u32;
+                let n = (f as u32 - zero) * 100
+                    + (s as u32 - zero) * 10
+                    + (t as u32 - zero) ;
+                if n > 255 {
+                    panic!("illegal escaped character constant");
+                }
+                char::from_u32(n).unwrap()
+            }
+            c => panic!("unrecocgnized escape character: '{c}'"),
+        };
+        out.push(escaped);
+    }
+    out
+}
+
 pub struct Lexer<'input> {
     input: &'input str,
     line: usize,
@@ -277,6 +316,36 @@ impl<'input> Lexer<'input> {
         Token::one_line(kind, self.line, start - self.line_start, end - start, TokenData::String(s.to_string()))
     }
 
+    fn string(&mut self) -> Token {
+        let (start, _) = self.chars.next().unwrap();
+        let start_line = self.line;
+        let start_col = start - self.line_start;
+        let end = loop {
+            let Some((i, c)) = self.chars.next() else { panic!("unclosed string literal") };
+            if c == '"' {
+                break i + 1;
+            }
+            if c == '\n' {
+                self.line += 1;
+                self.line_start = i;
+            }
+            if c == '\\' {
+                // escape sequence handling is dealt with later
+                self.chars.next();
+            }
+        };
+
+        let contents = escape_string(&self.input[start..end]);
+        Token {
+            loc: Range { 
+                start: (start_line, start_col),
+                end: (self.line, end - self.line_start),
+            },
+            kind: TokenKind::String,
+            data: TokenData::String(contents.to_string()),
+        }
+    }
+
     pub fn lex(&mut self) -> Option<Token> {
         loop {
             let token = match self.chars.peek().map(|(_, c)| c) {
@@ -366,6 +435,7 @@ impl<'input> Lexer<'input> {
                 Some('0'..='9') => self.integer(),
                 Some('a'..='z') => self.ident(),
                 Some('A'..='Z') => self.uident(),
+                Some('"') => self.string(),
                 None => return None,
                 _ => todo!(),
             };
