@@ -44,6 +44,8 @@ const CALLING_CONVENTION_TESTS: &[(&str, i64)] = &[
     ("llprograms/call4.ll", 34),
     ("llprograms/call5.ll", 24),
     ("llprograms/call6.ll", 26),
+    ("llprograms/call7.ll", 7),
+    ("llprograms/call8.ll", 21),
 ];
 
 const MEMORY_TESTS: &[(&str, i64)] = &[
@@ -59,6 +61,7 @@ const TERMINATOR_TESTS: &[(&str, i64)] = &[
     ("llprograms/br2.ll", 17),
     ("llprograms/cbr1.ll", 7),
     ("llprograms/cbr2.ll", 9),
+    ("llprograms/cbr3.ll", 9),
     ("llprograms/duplicate_lbl.ll", 1),
 ];
 
@@ -75,6 +78,8 @@ const GEP_TESTS: &[(&str, i64)] = &[
     ("llprograms/gep6.ll", 7),
     // ("llprograms/gep7.ll", 7), OOB
     ("llprograms/gep8.ll", 2),
+    ("llprograms/gep9.ll", 5),
+    ("llprograms/gep10.ll", 3),
 ];
 
 const IO_TESTS: &[(&str, &[&str], &str)] = &[

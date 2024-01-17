@@ -1,7 +1,6 @@
 use clap::Parser;
 
 use std::path::PathBuf;
-use std::ffi::OsStr;
 use std::fs;
 
 #[derive(Parser)]
@@ -15,48 +14,47 @@ struct Args {
     interp_ll: bool,
 }
 
-fn ll_main() {
+fn main() {
     let args = Args::parse();
-    if args.path.extension() != Some(&OsStr::new("ll")) {
-        eprintln!("Only supporting ll files");
+    let Some(ext) = args.path.extension().map(|s| s.to_str()).flatten() else {
+        eprintln!("need a file extension");
         return;
-    }
+    };
 
-    let s = fs::read_to_string(&args.path).unwrap();
-    let prog = match oat::llvm::parse(&s) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            return;
+    let ll_prog = if ext == "oat" {
+        let s = fs::read_to_string(&args.path).unwrap();
+        let prog = match oat::oat::parse(&s) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{e:?}");
+                return;
+            }
+        };
+
+        println!("{prog:?}");
+        // todo: convert to llvmir
+        return;
+    } else if ext == "ll" {
+        let s = fs::read_to_string(&args.path).unwrap();
+        match oat::llvm::parse(&s) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
         }
+    } else {
+        eprintln!("Only supporting oat or ll files");
+        return;
     };
 
     if args.print_ll {
-        oat::llvm::print(&prog);
+        oat::llvm::print(&ll_prog);
     }
 
     if args.interp_ll {
         let prog_args: Vec<_> = args.args.iter().map(|s| &**s).collect();
-        let r = oat::llvm::interp(&prog, &prog_args).unwrap();
-        eprintln!("Program returned {r}");
+        let r = oat::llvm::interp(&ll_prog, &prog_args).unwrap();
+        std::process::exit(r as i32);
     }
-}
-
-fn main() {
-    let args = Args::parse();
-    if args.path.extension() != Some(&OsStr::new("oat")) {
-        eprintln!("Only supporting oat files");
-        return;
-    }
-
-    let s = fs::read_to_string(&args.path).unwrap();
-    let prog = match oat::oat::parse(&s) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e:?}");
-            return;
-        }
-    };
-
-    println!("{prog:?}");
 }
