@@ -16,6 +16,8 @@ class Test:
     exitcode: int = 0
     category: str = 'none'
     skip: str = ''
+    todo: bool = False
+    prints: str = b''
 
 def parse_test(filepath: str) -> Test:
     test_options = []
@@ -34,6 +36,10 @@ def parse_test(filepath: str) -> Test:
             test.category = rest
         elif opt == 'skip':
             test.skip = rest
+        elif opt == 'todo':
+            test.todo = rest
+        elif opt == 'prints':
+            test.prints = (rest + '\n').encode('utf8')
         else:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
@@ -46,30 +52,45 @@ def parse_tests(paths: List[str]) -> List[Test]:
     return tests
 
 def run_test(test):
-    eprint(f"running test at '{test.path}'... ", end='')
+    # todo: use tabs and longest test length
+    eprint(f"running test at {test.path}...", end='')
     if test.skip:
         eprint(f'SKIPPED ({test.skip})')
         return True
 
-    proc = subprocess.run([OAT, test.path, '--interp-ll'])
+    proc = subprocess.run([OAT, test.path, '--interp-ll'], stdout=subprocess.PIPE)
+
     if proc.returncode != test.exitcode:
         eprint(f"FAILED\nexpected an exit code of '{test.exitcode}' but it was '{proc.returncode}'")
         return False
-    eprint('PASS')
+    if proc.stdout != test.prints:
+        eprint(f"FAILED\nexpected printed output '{test.prints}' but it printed '{proc.stdout}'")
+        return False
+
+    if test.todo:
+        eprint(f'PASS (TODO {test.todo})')
+    else:
+        eprint('PASS')
     return True
 
-def run_tests(paths):
-    tests = parse_tests(paths)
+def filter_tests(tests: List[Test]) -> List[Test]:
     if args.category == 'all':
         pass
     elif args.category == 'not-none':
         tests = [t for t in tests if t.category != 'none']
     else:
         tests = [t for t in tests if t.category == args.category]
+    return tests
 
+def run_tests(tests: List[Test]):
     for t in tests:
         if not run_test(t):
             break
+
+def list_tests(tests: List[Test]):
+    for t in tests:
+        print(t.path)
+
 
 def main():
     cargo_build = subprocess.run(['cargo', 'build'])
@@ -77,17 +98,25 @@ def main():
         exit(1)
 
     if args.suite == 'all':
-        pass
+        return
     elif args.suite == 'llvm':
         ll_files = [p for p in pathlib.Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
-        run_tests(ll_files)
+        tests = parse_tests(ll_files)
     else:
         run_test(args.suite)
+        return
+
+    tests = filter_tests(tests)
+    if args.list:
+        list_tests(tests)
+    else:
+        run_tests(tests)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', help="expected a suite name like 'all', 'llvm', or a filename", nargs='?')
-    parser.add_argument('-c', '--category', choices=['all', 'none', 'not-none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith'], default='all')
+    parser.add_argument('-c', '--category', choices=['all', 'none', 'not-none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io'], default='all')
+    parser.add_argument('-l', '--list', action='store_true')
     args = parser.parse_args()
 
     main()

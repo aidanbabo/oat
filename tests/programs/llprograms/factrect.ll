@@ -1,3 +1,5 @@
+;;category large
+;;exitcode 120
 define i64 @factorial(i64 %n) {
   %cmp = icmp eq i64 %n, 0
   br i1 %cmp, label %ret1, label %recurse

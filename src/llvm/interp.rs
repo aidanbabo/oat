@@ -527,17 +527,27 @@ impl<'prog> Interpreter<'prog> {
             panic!("runtime_call: non-string ptr arg")
         };
 
+        fn null_terminated_to_rust(s: &str) -> &str {
+            let Some(end) = s.char_indices().find_map(|(i, c)| (c == '\0').then_some(i)) else {
+                panic!("runtime_call: got a non-null-terminated string")
+            };
+            &s[..end]
+        }
+
         match (ty, &**func, args) {
             (ast::Ty::Void, "ll_puts", [SVal::Ptr(p)]) => {
-                let s = load_strptr(p)?;
-                println!("{s}");
+                let nt = load_strptr(p)?;
+                let s = null_terminated_to_rust(&nt);
+                println!("{}", s);
                 Ok(SVal::Undef)
             }
             (ast::Ty::Ptr(t), "ll_strcat", [SVal::Ptr(ps1), SVal::Ptr(ps2)]) => {
-                let s1 = load_strptr(ps1)?;
-                let s2 = load_strptr(ps2)?;
+                let nt1 = load_strptr(ps1)?;
+                let nt2 = load_strptr(ps2)?;
+                let s1 = null_terminated_to_rust(&nt1);
+                let s2 = null_terminated_to_rust(&nt2);
                 let mid = self.next_id();
-                let mv = MVal(vec![MTree::Str(format!("{s1}{s2}"))]);
+                let mv = MVal(vec![MTree::Str(format!("{s1}{s2}\0"))]);
                 self.config.heap.insert(mid, mv);
                 Ok(SVal::Ptr(Ptr {
                     ty: (**t).clone(),

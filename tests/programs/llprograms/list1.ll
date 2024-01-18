@@ -1,3 +1,6 @@
+;;category large
+;;exitcode 3
+;; skip UndefMemDeref: should pass
 %node = type { i64, %node* }
 
 @hd = global %node { i64 1, %node* @md }

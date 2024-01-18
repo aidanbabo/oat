@@ -1,3 +1,6 @@
+;;category io
+;;prints argc < 3
+;;todo different args passed in
 declare void @ll_puts(i8*)
 declare i8* @ll_strcat(i8*, i8*)
 

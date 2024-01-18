@@ -1,3 +1,5 @@
+;;category io
+;;prints hello, world!
 declare void @ll_puts(i8*)
 
 @gstr = global [14 x i8] c"hello, world!\00"
