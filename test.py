@@ -15,6 +15,7 @@ class Test:
     path: str
     exitcode: int = 0
     category: str = 'none'
+    skip: str = ''
 
 def parse_test(filepath: str) -> Test:
     test_options = []
@@ -31,6 +32,8 @@ def parse_test(filepath: str) -> Test:
             test.exitcode = int(rest)
         elif opt == 'category':
             test.category = rest
+        elif opt == 'skip':
+            test.skip = rest
         else:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
@@ -44,6 +47,10 @@ def parse_tests(paths: List[str]) -> List[Test]:
 
 def run_test(test):
     eprint(f"running test at '{test.path}'... ", end='')
+    if test.skip:
+        eprint(f'SKIPPED ({test.skip})')
+        return True
+
     proc = subprocess.run([OAT, test.path, '--interp-ll'])
     if proc.returncode != test.exitcode:
         eprint(f"FAILED\nexpected an exit code of '{test.exitcode}' but it was '{proc.returncode}'")
@@ -53,7 +60,11 @@ def run_test(test):
 
 def run_tests(paths):
     tests = parse_tests(paths)
-    if args.category != 'all':
+    if args.category == 'all':
+        pass
+    elif args.category == 'not-none':
+        tests = [t for t in tests if t.category != 'none']
+    else:
         tests = [t for t in tests if t.category == args.category]
 
     for t in tests:
@@ -76,7 +87,7 @@ def main():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', help="expected a suite name like 'all', 'llvm', or a filename", nargs='?')
-    parser.add_argument('-c', '--category', choices=['binop', 'all', 'none'], default='all')
+    parser.add_argument('-c', '--category', choices=['all', 'none', 'not-none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith'], default='all')
     args = parser.parse_args()
 
     main()

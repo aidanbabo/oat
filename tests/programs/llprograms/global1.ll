@@ -1,3 +1,6 @@
+;;category memory
+;;exitcode 12
+
 @gbl = global i64 12
 
 define i64 @main(i64 %argc, i8** %arcv) {

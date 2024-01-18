@@ -1,3 +1,5 @@
+;;category bitcast
+;;exitcode 3
 define i64 @main(i64 %argc, i8** %argv) {
   %1 = alloca i64
   store i64 3, i64* %1

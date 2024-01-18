@@ -1,3 +1,5 @@
+;;category calling-convention
+;;exitcode 42
 define i64 @foo() {
   ret i64 42
 }

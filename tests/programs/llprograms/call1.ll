@@ -1,3 +1,5 @@
+;;category calling-convention
+;;exitcode 17
 define i64 @foo(i64 %x) {
   ret i64 %x
 }

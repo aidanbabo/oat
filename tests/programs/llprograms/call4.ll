@@ -1,3 +1,5 @@
+;;category calling-convention
+;;exitcode 34
 define i64 @bar(i64 %x, i64 %y) {
   %1 = add i64 %x, %y
   ret i64 %1

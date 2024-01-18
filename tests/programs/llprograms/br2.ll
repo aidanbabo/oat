@@ -1,3 +1,5 @@
+;;category terminator
+;;exitcode 17
 define i64 @main(i64 %argc, i8** %arcv) {
   %1 = add i64 5, 12
   br label %next

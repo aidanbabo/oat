@@ -1,3 +1,5 @@
+;;category gep
+;;exitcode 6
 %disju = type { i64, i8* }
 %var1 = type { i64, i64* }
 %var2 = type { i64, i8** }

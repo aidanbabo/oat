@@ -1,3 +1,5 @@
+;;category calling-convention
+;;exitcode 7
 define i64 @bar(i64 %x1, i64 %x2, i64 %x3, i64 %x4, i64 %x5, i64 %x6, i64 %x7, i64 %x8) {
   ret i64 %x7
 }
