@@ -166,23 +166,6 @@ fn mval_of_gdecl(gd: &ast::Gdecl) -> MVal {
     MVal(vec![mtree_of_gdecl(gd)])
 }
 
-// undef constructor
-// used later? ported on hw3
-#[allow(dead_code)]
-fn mval_of_ty(named_types: &HashMap<ast::Tid, ast::Ty>, t: ast::Ty) -> MVal {
-    fn mtree_of_ty(named_types: &HashMap<ast::Tid, ast::Ty>, t: ast::Ty) -> MTree {
-        match t {
-            ast::Ty::I1 | ast::Ty::I8 | ast::Ty::I64 | ast::Ty::Ptr(..) => MTree::Word(SVal::Undef),
-            ast::Ty::Array(n, t) if *t == ast::Ty::I8 => MTree::Str(vec!['0'; n as usize].into_iter().collect()),
-            ast::Ty::Array(n, _t) => MTree::Node(MVal(vec![MTree::Word(SVal::Undef); n as usize])),
-            ast::Ty::Struct(ts) => MTree::Node(MVal(ts.into_iter().map(|t| mtree_of_ty(named_types, t)).collect())),
-            ast::Ty::Fun(..) | ast::Ty::Void => unreachable!("shouldn't try to construct this type"),
-            ast::Ty::Named(id) => mtree_of_ty(named_types, named_types[&id].clone()),
-        }
-    }
-    MVal(vec![mtree_of_ty(named_types, t)])
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum ExecError {
     /// mem access not in bounds
@@ -198,6 +181,7 @@ pub enum ExecError {
     #[error("incompatible tag dereference")]
     IncompatTagDeref,
     /// read uninitialized memory
+    /// (unused)
     #[error("undefined memory dereference")]
     UndefMemDeref,
     /// uninitialized memory load

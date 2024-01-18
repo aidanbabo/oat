@@ -38,8 +38,3 @@ pub fn gensym(s: &str) -> String {
     *ID_COUNT.lock().unwrap() += 1;
     format!("_{s}__{}", *ID_COUNT.lock().unwrap())
 }
-
-#[allow(dead_code)]
-pub fn reset() {
-    *ID_COUNT.lock().unwrap() = 0;
-}

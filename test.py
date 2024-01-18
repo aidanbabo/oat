@@ -18,6 +18,7 @@ class Test:
     skip: str = ''
     todo: bool = False
     prints: str = b''
+    passed_by_name: bool = False
 
 def parse_test(filepath: str) -> Test:
     test_options = []
@@ -51,10 +52,10 @@ def parse_tests(paths: List[str]) -> List[Test]:
         tests.append(t)
     return tests
 
-def run_test(test):
+def run_test(test: Test):
     # todo: use tabs and longest test length
     eprint(f"running test at {test.path}...", end='')
-    if test.skip:
+    if test.skip and not test.passed_by_name:
         eprint(f'SKIPPED ({test.skip})')
         return True
 
@@ -91,22 +92,25 @@ def list_tests(tests: List[Test]):
     for t in tests:
         print(t.path)
 
-
 def main():
     cargo_build = subprocess.run(['cargo', 'build'])
     if cargo_build.returncode != 0:
         exit(1)
 
     if args.suite == 'all':
+        eprint('the only supported testing right now is llvm')
         return
     elif args.suite == 'llvm':
         ll_files = [p for p in pathlib.Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
         tests = parse_tests(ll_files)
     else:
-        run_test(args.suite)
+        t = parse_test(args.suite)
+        t.passed_by_name = True
+        run_test(t)
         return
 
     tests = filter_tests(tests)
+    # todo: group tests by category and sort
     if args.list:
         list_tests(tests)
     else:
