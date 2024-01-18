@@ -1,3 +1,5 @@
+;;category large
+;;exitcode 240
 define i64 @factorial(i64 %n) {
   %1 = alloca i64
   %acc = alloca i64

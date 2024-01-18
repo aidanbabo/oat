@@ -1,3 +1,5 @@
+;;category uncategorized
+;;exitcode 2
 define i64 @gcd_rec(i64 %a, i64 %b) {
   %1 = alloca i64
   store i64 %a, i64* %1

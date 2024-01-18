@@ -1,3 +1,5 @@
+;;category uncategorized
+;;exitcode 3
 define i64 @binary_gcd(i64 %u, i64 %v) {
   %u_eq_v = icmp eq i64 %u, %v
   br i1 %u_eq_v, label %ret_u, label %term1

@@ -1,3 +1,5 @@
+;;category uncategorized
+;;exitcode 108
 define i64 @one_iteration(i64 %n) {
   %1 = shl i64 %n, 1
   %2 = xor i64 %n, %1

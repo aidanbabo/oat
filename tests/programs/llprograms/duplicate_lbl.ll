@@ -1,3 +1,5 @@
+;;category terminator
+;;exitcode 1
 define i64 @f1(i64 %a) {
   br label %start
 start:

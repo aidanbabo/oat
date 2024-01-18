@@ -1,3 +1,6 @@
+;;category uncategorized
+;;exitcode 8
+;;skip UndefPtrDeref in reference interpreter
 %struct.Node = type { %struct.Node*, %struct.Node*, i64 }
 
 @node1 = global %struct.Node { %struct.Node* @node2, %struct.Node* @node3, i64 50 }

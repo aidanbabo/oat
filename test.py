@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass
+from enum import Enum
 import pathlib
 import subprocess
 import sys
@@ -19,6 +20,11 @@ class Test:
     todo: bool = False
     prints: str = b''
     passed_by_name: bool = False
+
+class TestResult(Enum):
+    PASSED = 0
+    FAILED = 1
+    SKIPPED = 2
 
 def parse_test(filepath: str) -> Test:
     test_options = []
@@ -52,41 +58,50 @@ def parse_tests(paths: List[str]) -> List[Test]:
         tests.append(t)
     return tests
 
-def run_test(test: Test):
+def run_test(test: Test) -> TestResult:
     # todo: use tabs and longest test length
     eprint(f"running test at {test.path}...", end='')
     if test.skip and not test.passed_by_name:
         eprint(f'SKIPPED ({test.skip})')
-        return True
+        return TestResult.SKIPPED
 
+    # todo: special handling of interpreter to distinguish between interpreter crash and runtime crash
     proc = subprocess.run([OAT, test.path, '--interp-ll'], stdout=subprocess.PIPE)
 
     if proc.returncode != test.exitcode:
         eprint(f"FAILED\nexpected an exit code of '{test.exitcode}' but it was '{proc.returncode}'")
-        return False
+        return TestResult.FAILED
     if proc.stdout != test.prints:
         eprint(f"FAILED\nexpected printed output '{test.prints}' but it printed '{proc.stdout}'")
-        return False
+        return TestResult.FAILED
 
     if test.todo:
         eprint(f'PASS (TODO {test.todo})')
     else:
         eprint('PASS')
-    return True
+    return TestResult.PASSED
 
 def filter_tests(tests: List[Test]) -> List[Test]:
     if args.category == 'all':
-        pass
-    elif args.category == 'not-none':
         tests = [t for t in tests if t.category != 'none']
     else:
         tests = [t for t in tests if t.category == args.category]
     return tests
 
 def run_tests(tests: List[Test]):
+    passed = failed = skipped = 0
     for t in tests:
-        if not run_test(t):
-            break
+        tr = run_test(t)
+        if tr == TestResult.PASSED:
+            passed += 1
+        elif tr == TestResult.SKIPPED:
+            skipped += 1
+        elif tr == TestResult.FAILED:
+            if args.early:
+                break
+            failed += 1
+    print(f"{passed} passed, {failed} failed, {skipped} skipped")
+
 
 def list_tests(tests: List[Test]):
     for t in tests:
@@ -119,8 +134,9 @@ def main():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', help="expected a suite name like 'all', 'llvm', or a filename", nargs='?')
-    parser.add_argument('-c', '--category', choices=['all', 'none', 'not-none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io'], default='all')
+    parser.add_argument('-c', '--category', choices=['all', 'none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized'], default='all')
     parser.add_argument('-l', '--list', action='store_true')
+    parser.add_argument('--early', action='store_true')
     args = parser.parse_args()
 
     main()

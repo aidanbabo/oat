@@ -1,3 +1,5 @@
+;;category uncategorized
+;;exitcode 3
 %vec = type [2 x i64]
 %centroid = type { i64, %vec }
 %qtree = type { %centroid, [4 x %qtree*] }

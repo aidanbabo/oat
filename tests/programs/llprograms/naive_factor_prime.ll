@@ -1,3 +1,5 @@
+;;category uncategorized
+;;exitcode 1
 define i64 @naive_mod(i64 %top, i64 %bottom) {
   %product_sum = alloca i64
   store i64 0, i64* %product_sum
