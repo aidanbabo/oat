@@ -1,11 +1,20 @@
 use super::{ast, Range, Node};
 use super::lexer::{Token, TokenKind, TokenData};
 
+use std::fmt;
+
 use enum_map::{EnumMap, enum_map};
 use once_cell::sync::Lazy;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError;
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "parse error")
+    }
+}
+impl std::error::Error for ParseError {}
+
 pub type ParseResult<T> = Result<T, ParseError>;
 
 #[repr(u8)]
@@ -410,7 +419,7 @@ impl Parser {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> ParseResult<Node<ast::Exp>> {
-        let rule = self.peek().map(|t| get_rule(t.kind).prefix).flatten();
+        let rule = self.peek().and_then(|t| get_rule(t.kind).prefix);
         let Some(prefix) = rule else {
             panic!("expected expression")
         };
@@ -424,7 +433,7 @@ impl Parser {
                 break;
             }
 
-            let infix = next_rule.map(|r| r.infix).flatten();
+            let infix = next_rule.and_then(|r| r.infix);
             if let Some(infix) = infix {
                 lhs = infix(self, lhs)?;
             } else {

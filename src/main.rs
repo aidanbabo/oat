@@ -16,7 +16,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let Some(ext) = args.path.extension().map(|s| s.to_str()).flatten() else {
+    let Some(ext) = args.path.extension().and_then(|s| s.to_str()) else {
         eprintln!("need a file extension");
         return;
     };

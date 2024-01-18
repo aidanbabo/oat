@@ -160,7 +160,7 @@ impl fmt::Display for Block {
                 Insn::Store(_, _, _) | Insn::Call(Ty::Void, _, _) => write!(f, "\t")?,
                 _ => write!(f, "\t%{u} = ")?,
             }
-            write!(f, "{i}\n")?;
+            writeln!(f, "{i}")?;
         }
         write!(f, "\t{}", self.term.1)
     }
@@ -168,10 +168,10 @@ impl fmt::Display for Block {
 
 impl fmt::Display for Cfg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}\n", self.entry)?;
+        writeln!(f, "{}", self.entry)?;
         for (label, b) in &self.blocks {
-            write!(f, "{label}:\n")?;
-            write!(f, "{b}\n")?;
+            writeln!(f, "{label}:")?;
+            writeln!(f, "{b}")?;
         }
         Ok(())
     }
@@ -202,14 +202,14 @@ impl fmt::Display for Ginit {
 impl fmt::Display for Prog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (u, t) in &self.tdecls {
-            write!(f, "%{u} = type {t}\n")?
+            writeln!(f, "%{u} = type {t}")?
         }
         if !self.tdecls.is_empty() {
             writeln!(f)?;
         }
 
         for (gid, (ty, init)) in &self.gdecls {
-            write!(f, "@{gid} = global {ty} {init}\n")?;
+            writeln!(f, "@{gid} = global {ty} {init}")?;
         }
         if !self.gdecls.is_empty() {
             writeln!(f)?;
@@ -236,9 +236,9 @@ impl fmt::Display for Prog {
                 Ty::Fun(ts, rt) => {
                     write!(f, "declare {rt} @{g}(")?;
                     write_separated(f, ", ", ts)?;
-                    write!(f, ")\n")?;
+                    writeln!(f, ")")?;
                 }
-                _ => write!(f, "@{g} = external global {t}\n")?,
+                _ => writeln!(f, "@{g} = external global {t}")?,
             }
         }
 

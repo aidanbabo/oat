@@ -243,12 +243,9 @@ impl<'input> Lexer<'input> {
         let mut end = start;
         let mut hex = false;
         if c0 == '0' {
-            match self.chars.peek() {
-                Some((_, 'x')) => {
-                    end = self.chars.next().unwrap().0;
-                    hex = true;
-                }
-                _ => {},
+            if let Some((_, 'x')) = self.chars.peek() {
+                end = self.chars.next().unwrap().0;
+                hex = true;
             }
         } else {
             num = c0 as i64 - '0' as i64
@@ -280,13 +277,8 @@ impl<'input> Lexer<'input> {
     fn any_ident(&mut self) -> (usize, usize) {
         let (start, _) = self.chars.next().unwrap();
         let mut end = start;
-        loop {
-            match self.chars.peek().map(|(_, c)| c) {
-                Some('a'..='z' | 'A'..='Z' | '_' | '0'..='9') => {
-                    end = self.chars.next().unwrap().0;
-                }
-                _ => break,
-            }
+        while let Some('a'..='z' | 'A'..='Z' | '_' | '0'..='9') = self.chars.peek().map(|(_, c)| c) {
+            end = self.chars.next().unwrap().0;
         }
         end += 1;
         (start, end)
@@ -308,7 +300,7 @@ impl<'input> Lexer<'input> {
                     end += 1;
                     TokenKind::Ifq
                 }
-                _ => kind.clone(),
+                _ => *kind,
             };
             (k, TokenData::None)
         } else {

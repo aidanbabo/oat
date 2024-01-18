@@ -23,19 +23,19 @@ type Idx = i64; // index
 
 #[derive(Clone, Debug, PartialEq)]
 enum Bid {
-    GlobalId(ast::Gid),
-    HeapId(Mid),
-    StackId(Fid),
-    NullId,
+    Global(ast::Gid),
+    Heap(Mid),
+    Stack(Fid),
+    Null,
 }
 
 impl fmt::Display for Bid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Bid::GlobalId(gid) => write!(f, "@{gid}"),
-            Bid::HeapId(mid) => write!(f, "M{mid}"),
-            Bid::StackId(fid) => write!(f, "S{fid}"),
-            Bid::NullId => write!(f, "null"),
+            Bid::Global(gid) => write!(f, "@{gid}"),
+            Bid::Heap(mid) => write!(f, "M{mid}"),
+            Bid::Stack(fid) => write!(f, "S{fid}"),
+            Bid::Null => write!(f, "null"),
         }
     }
 }
@@ -149,18 +149,18 @@ fn mval_of_gdecl(gd: &ast::Gdecl) -> MVal {
         match gd {
             (ty, ast::Ginit::Null) => MTree::Word(SVal::Ptr(Ptr {
                 ty: ty.clone(),
-                bid: Bid::NullId,
+                bid: Bid::Null,
                 indices: vec![0],
             })),
             (ty, ast::Ginit::Gid(g)) => MTree::Word(SVal::Ptr(Ptr {
                 ty: ty.clone(),
-                bid: Bid::GlobalId(g.clone()),
+                bid: Bid::Global(g.clone()),
                 indices: vec![0],
             })),
             (_, ast::Ginit::Bitcast(t1, v, _)) => mtree_of_gdecl(&(t1.clone(), (**v).clone())),
             (_, ast::Ginit::Int(i)) => MTree::Word(SVal::Int(*i)),
             (_, ast::Ginit::String(s)) => MTree::Str(s.clone()),
-            (_, ast::Ginit::Array(gs) | ast::Ginit::Struct(gs)) => MTree::Node(MVal(gs.into_iter().map(mtree_of_gdecl).collect())),
+            (_, ast::Ginit::Array(gs) | ast::Ginit::Struct(gs)) => MTree::Node(MVal(gs.iter().map(mtree_of_gdecl).collect())),
         }
     }
     MVal(vec![mtree_of_gdecl(gd)])
@@ -215,13 +215,13 @@ impl<'prog> Interpreter<'prog> {
             init_args: Default::default(),
         };
 
-        let mut args: Vec<_> = args.iter().map(|s| *s).collect();
+        let mut args: Vec<_> = args.to_vec();
         args.insert(0, "LLINTERP");
         let (ptrs, mut heap): (Vec<_>, HashMap<_, _>) = args.iter().map(|a| {
             let id = interp.next_id();
             let ptr = SVal::Ptr(Ptr {
                 ty: ast::Ty::I8,
-                bid: Bid::HeapId(id),
+                bid: Bid::Heap(id),
                 indices: vec![0],
             });
             (ptr, (id, MVal(vec![MTree::Str(a.to_string())])))
@@ -231,13 +231,13 @@ impl<'prog> Interpreter<'prog> {
         let aid = interp.next_id();
         let argv = SVal::Ptr(Ptr {
             ty: ast::Ty::Array(args.len() as i64, Box::new(ast::Ty::Ptr(Box::new(ast::Ty::I8)))),
-            bid: Bid::HeapId(aid),
+            bid: Bid::Heap(aid),
             indices: vec![0, 0],
         });
-        let amval: Vec<_> = ptrs.into_iter().map(|p| MTree::Word(p)).collect();
+        let amval: Vec<_> = ptrs.into_iter().map(MTree::Word).collect();
         heap.insert(aid, MVal(vec![MTree::Node(MVal(amval))]));
 
-        interp.config.heap.extend(heap.into_iter());
+        interp.config.heap.extend(heap);
         interp.init_args = vec![argc, argv];
         interp
     }
@@ -368,10 +368,10 @@ impl<'prog> Interpreter<'prog> {
 
     fn load_bid(&self, bid: &Bid) -> Result<&MVal, ExecError> {
         match bid {
-            Bid::NullId => return Err(ExecError::NullPtrDeref),
-            Bid::HeapId(mid) => self.config.heap.get(mid).ok_or(ExecError::UseAfterFree),
-            Bid::GlobalId(gid) => Ok(self.config.globals.get(gid).expect("Load: bogus gid")),
-            Bid::StackId(fid) => self.config.stack.get(fid).ok_or(ExecError::UseAfterFree),
+            Bid::Null => Err(ExecError::NullPtrDeref),
+            Bid::Heap(mid) => self.config.heap.get(mid).ok_or(ExecError::UseAfterFree),
+            Bid::Global(gid) => Ok(self.config.globals.get(gid).expect("Load: bogus gid")),
+            Bid::Stack(fid) => self.config.stack.get(fid).ok_or(ExecError::UseAfterFree),
         }
     }
 
@@ -382,20 +382,20 @@ impl<'prog> Interpreter<'prog> {
     fn store_ptr(&mut self, p: &Ptr, mt: &MTree) -> Result<(), ExecError> {
         let mut mval = self.load_bid(&p.bid)?.clone();
         match &p.bid {
-            Bid::NullId => return Err(ExecError::NullPtrDeref),
-            Bid::HeapId(mid) => {
+            Bid::Null => Err(ExecError::NullPtrDeref),
+            Bid::Heap(mid) => {
                 Self::store_idxs(&mut mval, &p.indices, mt)?;
-                self.config.heap.insert(mid.clone(), mval);
+                self.config.heap.insert(*mid, mval);
                 Ok(())
             }
-            Bid::GlobalId(gid) => {
+            Bid::Global(gid) => {
                 Self::store_idxs(&mut mval, &p.indices, mt)?;
                 self.config.globals.insert(gid.clone(), mval);
                 Ok(())
             }
-            Bid::StackId(fid) => {
+            Bid::Stack(fid) => {
                 Self::store_idxs(&mut mval, &p.indices, mt)?;
-                self.config.stack.insert(fid.clone(), mval);
+                self.config.stack.insert(*fid, mval);
                 Ok(())
             }
         }
@@ -413,7 +413,7 @@ impl<'prog> Interpreter<'prog> {
                 }
                 (ast::Ty::Array(_, t), [_, idxs2@..]) => {
                     // Don't check if OOB!
-                    tag = &*t;
+                    tag = t;
                     idxs = idxs2;
                 }
                 (ast::Ty::Named(id), _) => {
@@ -444,11 +444,11 @@ impl<'prog> Interpreter<'prog> {
                 t => t.clone(),
             }
         }
-        fn flatten_ty<'a>(named_types: &'a HashMap<ast::Tid, ast::Ty>, ty: &'a ast::Ty, b: &mut Vec<&'a ast::Ty>) {
+        fn flatten_ty<'a>(ty: &'a ast::Ty, b: &mut Vec<&'a ast::Ty>) {
             match ty {
                 ast::Ty::Struct(ts) => {
                     for t in ts {
-                        flatten_ty(named_types, t, b);
+                        flatten_ty(t, b);
                     }
                 }
                 t => b.push(t),
@@ -457,10 +457,10 @@ impl<'prog> Interpreter<'prog> {
 
         let mut styb = vec![];
         let mut tagb = vec![];
-        let styi8 = ptrtoi8(&self.prog.tdecls, &sty);
-        let tagi8 = ptrtoi8(&self.prog.tdecls, &tag);
-        flatten_ty(&self.prog.tdecls, &styi8, &mut styb);
-        flatten_ty(&self.prog.tdecls, &tagi8, &mut tagb);
+        let styi8 = ptrtoi8(&self.prog.tdecls, sty);
+        let tagi8 = ptrtoi8(&self.prog.tdecls, tag);
+        flatten_ty(&styi8, &mut styb);
+        flatten_ty(&tagi8, &mut tagb);
 
         if tagb.len() < styb.len() {
             return false;
@@ -475,7 +475,7 @@ impl<'prog> Interpreter<'prog> {
         }
 
         match p {
-            Ptr { bid: Bid::NullId, .. } => SVal::Undef,
+            Ptr { bid: Bid::Null, .. } => SVal::Undef,
             Ptr { ty, bid, indices } => SVal::Ptr(Ptr {
                 ty: ty.clone(),
                 bid: bid.clone(),
@@ -490,16 +490,16 @@ impl<'prog> Interpreter<'prog> {
             (ast::Ty::I1, ast::Operand::Const(i)) => SVal::Int(*i),
             (ast::Ty::Ptr(ty), ast::Operand::Null) => SVal::Ptr(Ptr {
                 ty: (**ty).clone(),
-                bid: Bid::NullId,
+                bid: Bid::Null,
                 indices: vec![0],
             }),
             (ast::Ty::Ptr(ty), ast::Operand::Gid(g)) => SVal::Ptr(Ptr {
                 ty: (**ty).clone(),
-                bid: Bid::GlobalId(g.clone()),
+                bid: Bid::Global(g.clone()),
                 indices: vec![0],
             }),
             (_, ast::Operand::Id(u)) => locals[u].clone(),
-            (ast::Ty::Named(id), o) => self.interp_operand(locals, &self.prog.tdecls[&*id], o),
+            (ast::Ty::Named(id), o) => self.interp_operand(locals, &self.prog.tdecls[id], o),
             _ => panic!("interp operand: malformed operand {o:?}:{ty:?}"),
         }
     }
@@ -535,7 +535,7 @@ impl<'prog> Interpreter<'prog> {
                 self.config.heap.insert(mid, mv);
                 Ok(SVal::Ptr(Ptr {
                     ty: (**t).clone(),
-                    bid: Bid::HeapId(mid),
+                    bid: Bid::Heap(mid),
                     indices: vec![0],
                 }))
 
@@ -546,7 +546,7 @@ impl<'prog> Interpreter<'prog> {
                 self.config.heap.insert(mid, mv);
                 Ok(SVal::Ptr(Ptr {
                     ty: ty.clone(),
-                    bid: Bid::HeapId(mid),
+                    bid: Bid::Heap(mid),
                     indices: vec![0],
                 }))
             }
@@ -559,7 +559,7 @@ impl<'prog> Interpreter<'prog> {
             return self.runtime_call(ty, func_name, args);
         }
 
-        let (_, func) = self.prog.fdecls.iter().find(|f| &f.0 == func_name).expect(&format!("interp_call: undefined function {func_name}"));
+        let (_, func) = self.prog.fdecls.iter().find(|f| &f.0 == func_name).unwrap_or_else(|| panic!("interp_call: undefined function {func_name}"));
 
         if func.params.len() != args.len() {
             panic!("interp_call: wrong no. arguments for {func_name}");
@@ -576,14 +576,14 @@ impl<'prog> Interpreter<'prog> {
         for insn in insns {
             match insn {
                 (u, ast::Insn::Binop(b, t, o1, o2)) => {
-                    let v1 = self.interp_operand(&locs, t, o1);
-                    let v2 = self.interp_operand(&locs, t, o2);
+                    let v1 = self.interp_operand(locs, t, o1);
+                    let v2 = self.interp_operand(locs, t, o2);
                     let vr = Self::interp_bop(*b, v1, v2);
                     locs.insert(u.clone(), vr);
                 }
                 (u, ast::Insn::Icmp(cnd, t, o1, o2)) => {
-                    let v1 = self.interp_operand(&locs, t, o1);
-                    let v2 = self.interp_operand(&locs, t, o2);
+                    let v1 = self.interp_operand(locs, t, o1);
+                    let v2 = self.interp_operand(locs, t, o2);
                     let vr = Self::interp_cnd(*cnd, v1, v2);
                     locs.insert(u.clone(), vr);
                 }
@@ -591,16 +591,16 @@ impl<'prog> Interpreter<'prog> {
                     let mut entry = self.config.stack.last_entry().expect("stack empty");
                     let ptr = SVal::Ptr(Ptr {
                         ty: ty.clone(),
-                        bid: Bid::StackId(*entry.key()),
+                        bid: Bid::Stack(*entry.key()),
                         indices: vec![entry.get().0.len() as i64],
                     });
                     entry.get_mut().0.push(MTree::Word(SVal::Undef));
                     locs.insert(u.clone(), ptr);
                 }
                 (u, ast::Insn::Load(t, o)) => {
-                    let mt = match self.interp_operand(&locs, &ast::Ty::Ptr(Box::new(t.clone())), &o) {
+                    let mt = match self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), o) {
                         SVal::Ptr(p) => {
-                            if self.effective_type(&self.effective_tag(&p)) != self.effective_type(&t) {
+                            if self.effective_type(&self.effective_tag(&p)) != self.effective_type(t) {
                                 return Err(ExecError::IncompatTagDeref);
                             }
                             self.load_ptr(&p)?
@@ -616,11 +616,11 @@ impl<'prog> Interpreter<'prog> {
                     locs.insert(u.clone(), v);
                 }
                 (_, ast::Insn::Store(t, os, od)) => {
-                    let vs = self.interp_operand(&locs, &t, &os);
-                    let vd = self.interp_operand(&locs, &ast::Ty::Ptr(Box::new(t.clone())), &od);
+                    let vs = self.interp_operand(locs, t, os);
+                    let vd = self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), od);
                     match vd {
                         SVal::Ptr(p) => {
-                            if self.effective_type(&self.effective_tag(&p)) != self.effective_type(&t) {
+                            if self.effective_type(&self.effective_tag(&p)) != self.effective_type(t) {
                                 return Err(ExecError::IncompatTagDeref);
                             }
                             self.store_ptr(&p, &MTree::Word(vs))?
@@ -632,21 +632,21 @@ impl<'prog> Interpreter<'prog> {
                 (u, ast::Insn::Call(t, ofn, ato)) => {
                     let ats: Vec<_> = ato.iter().map(|(t, _)| t.clone()).collect();
                     let ft = ast::Ty::Ptr(Box::new(ast::Ty::Fun(ats, Box::new(t.clone()))));
-                    let g = match self.interp_operand(&locs, &ft, &ofn) {
-                        SVal::Ptr(Ptr { bid: Bid::GlobalId(g), indices, ..}) if indices == &[0] => g,
+                    let g = match self.interp_operand(locs, &ft, ofn) {
+                        SVal::Ptr(Ptr { bid: Bid::Global(g), indices, ..}) if indices == [0] => g,
                         _ => panic!("bad call arg"),
                     };
-                    let args: Vec<_> = ato.iter().map(|(t, o)| self.interp_operand(&locs, t, o)).collect();
+                    let args: Vec<_> = ato.iter().map(|(t, o)| self.interp_operand(locs, t, o)).collect();
                     let r = self.interp_call(t, &g, &args)?;
                     locs.insert(u.clone(), r);
                 }
                 (u, ast::Insn::Bitcast(t1, o, _)) => {
-                    let v = self.interp_operand(&locs, &t1, &o);
+                    let v = self.interp_operand(locs, t1, o);
                     locs.insert(u.clone(), v);
                 }
                 (u, ast::Insn::Gep(t, o, os)) => {
                     let idxs: Vec<_> = os.iter()
-                        .map(|o| self.interp_operand(&locs, &ast::Ty::I64, o))
+                        .map(|o| self.interp_operand(locs, &ast::Ty::I64, o))
                         .map(|sval| {
                             if let SVal::Int(i) = sval {
                                 i
@@ -654,7 +654,7 @@ impl<'prog> Interpreter<'prog> {
                                 panic!("idx_of_sval: non-integer value")
                             }
                         }).collect();
-                    let v = match self.interp_operand(&locs, &ast::Ty::Ptr(Box::new(t.clone())), o) {
+                    let v = match self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), o) {
                         SVal::Ptr(p) => self.gep_ptr(t, &p, &idxs),
                         SVal::Undef => SVal::Undef,
                         SVal::Int(_) => panic!("non-ptr arg for gep {t:?}"),
@@ -677,13 +677,13 @@ impl<'prog> Interpreter<'prog> {
                 }
                 (_, ast::Terminator::Ret(t, Some(o))) => {
                     self.config.stack.pop_last();
-                    return Ok(self.interp_operand(&locs, &t, &o));
+                    return Ok(self.interp_operand(&locs, t, o));
                 }
                 (_, ast::Terminator::Br(l)) => {
                     &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1
                 }
                 (_, ast::Terminator::Cbr(o, l1, l2)) => {
-                    let v = self.interp_operand(&locs, &ast::Ty::I1, &o);
+                    let v = self.interp_operand(&locs, &ast::Ty::I1, o);
                     let l = if Self::interp_i1(&v) { l1 } else { l2 };
                     &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1
                 }
