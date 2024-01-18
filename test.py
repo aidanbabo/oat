@@ -93,7 +93,7 @@ def list_tests(tests: List[Test]):
         print(t.path)
 
 def main():
-    cargo_build = subprocess.run(['cargo', 'build'])
+    cargo_build = subprocess.run(['cargo', 'build', '--release'])
     if cargo_build.returncode != 0:
         exit(1)
 
