@@ -328,7 +328,7 @@ impl<'input> Lexer<'input> {
             }
         };
 
-        let contents = escape_string(&self.input[start..end]);
+        let contents = escape_string(&self.input[start+1..end-1]);
         Token {
             loc: Range { 
                 start: (start_line, start_col),

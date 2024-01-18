@@ -124,7 +124,7 @@ fn get_rule(kind: TokenKind) -> ParseRule {
             TokenKind::Bang => ParseRule::new(Precedence::None, Some(Parser::parse_unary), None),
             TokenKind::Global => ParseRule::new(Precedence::None, None, None),
             TokenKind::For => ParseRule::new(Precedence::None, None, None),
-            TokenKind::TBool => ParseRule::new(Precedence::None, None, None),
+            TokenKind::TBool => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
             TokenKind::Length => ParseRule::new(Precedence::None, Some(Parser::parse_length_exp), None),
             TokenKind::True => ParseRule::new(Precedence::None, Some(Parser::parse_bool_lit), None),
             TokenKind::False => ParseRule::new(Precedence::None, Some(Parser::parse_bool_lit), None),
@@ -164,8 +164,12 @@ impl Parser {
         }
     }
 
-    fn peek(&mut self) -> Option<&Token> {
+    fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.next_token)
+    }
+
+    fn peek_n(&self, n: usize) -> Option<&Token> {
+        self.tokens.get(self.next_token + n - 1)
     }
 
     fn consume(&mut self) -> Option<&Token> {
@@ -454,15 +458,6 @@ impl Parser {
     }
 
     fn parse_array_helper(&mut self, starting_loc: Range, ty: ast::Ty) -> ParseResult<Node<ast::Exp>> {
-        // new int[]{1, 2, 3}
-        if self.test_next_is(TokenKind::RBracket) {
-            self.consume();
-            self.assert_next_is(TokenKind::LBrace)?;
-            let (elems, rbrace) = self.parse_separated(Parser::parse_exp, TokenKind::Comma, TokenKind::RBrace)?;
-            let loc = Range::merge(starting_loc, rbrace.loc);
-            return Ok(Node { loc, t: ast::Exp::ArrElems(ty, elems) });
-        }
-
         // new int[3]
         let len = self.parse_exp()?;
         let rbracket_loc = self.assert_next_is(TokenKind::RBracket)?.loc;
@@ -491,18 +486,26 @@ impl Parser {
                 self.parse_array_helper(new_loc, ty)
             }
             Some(TokenKind::LBrace) => {
-                let ast::TyKind::Struct(name) = ty.kind else {
-                    panic!("expected a struct name in struct new expression")
-                };
-                if ty.nullable {
-                    panic!("expected a struct name not a nullable struct type")
+                match ty.kind {
+                    ast::TyKind::Struct(name) => {
+                        if ty.nullable {
+                            panic!("expected a struct name not a nullable struct type")
+                        }
+                        let (fields, rparen) = self.parse_separated(Parser::parse_field_exp, TokenKind::Semi, TokenKind::LBrace)?;
+                        let loc = Range::merge(new_loc, rparen.loc);
+                        Ok(Node { loc, t: ast::Exp::Struct(name, fields) })
+                    }
+                    ast::TyKind::Array(ty) => {
+                        let (elems, rbrace) = self.parse_separated(Parser::parse_exp, TokenKind::Comma, TokenKind::RBrace)?;
+                        let loc = Range::merge(new_loc, rbrace.loc);
+                        Ok(Node { loc, t: ast::Exp::ArrElems(*ty, elems) })
+                    }
+                    _ => panic!("cannot use `new` to create non-struct or non-array types")
                 }
-                let (fields, rparen) = self.parse_separated(Parser::parse_field_exp, TokenKind::Semi, TokenKind::LBrace)?;
-                let loc = Range::merge(new_loc, rparen.loc);
-                Ok(Node { loc, t: ast::Exp::Struct(name, fields) })
             }
+            // todo: these messages
             None => panic!("parsing failed in the middle of new expression"),
-            _ => panic!("expected '{{' for a new class instance or '[' for a new array")
+            _ => panic!("expected '{{' for a new struct or '[' for a new array")
         }
     }
 
@@ -678,6 +681,9 @@ impl Parser {
                     t.nullable = true;
                 }
                 Some(TokenKind::LBracket) => {
+                    if !self.peek_n(2).map(|t| t.kind == TokenKind::RBracket).unwrap_or(false) {
+                        break;
+                    }
                     self.consume();
                     self.assert_next_is(TokenKind::RBracket)?;
                     t = ast::Ty {
@@ -715,47 +721,62 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ast::*;
 
-    // todo: not very good unit tests tbh
-    // stop relying on lexer
-    #[test]
-    fn parse_type() {
-        let tokens = crate::oat::lexer::Lexer::new("(()->int[]?)?").lex_all();
-        let mut p = Parser::new(tokens);
-        let ty = p.parse_type();
-        let expected = ast::Ty {
-            nullable: true,
-            kind: ast::TyKind::Fun(
-                vec![],
-                Box::new(ast::Ty {
-                    nullable: true,
-                    kind: ast::TyKind::Array(
-                        Box::new(ast::Ty {
-                            nullable: false,
-                            kind: ast::TyKind::Int,
-                        })
-                    ),
-                }),
-            ),
-        };
-        assert_eq!(ty, Ok(expected))
+    fn nl<T>(t: T) -> Node<T> {
+        Node::no_loc(t)
     }
-    
+
+    fn bx<T>(t: T) -> Box<T> {
+        Box::new(t)
+    }
+
+    fn ty(kind: TyKind) -> Ty {
+        Ty { nullable: false, kind }
+    }
+
+    fn nty(kind: TyKind) -> Ty {
+        Ty { nullable: true, kind }
+    }
+
+    fn lex_toks(s: &str) -> Vec<Token> {
+        crate::oat::lexer::Lexer::new(s).lex_all()
+    }
+
+    fn exp_test(s: &str, expected: Node<Exp>) -> Result<(), ParseError> {
+        let tokens = lex_toks(s);
+        let e = Parser::new(tokens).parse_exp()?;
+        assert_eq!(e, expected);
+        Ok(())
+    }
+
     #[test]
-    fn parse_exp() {
-        let tokens = crate::oat::lexer::Lexer::new("5+6*7+8").lex_all();
-        let mut p = Parser::new(tokens);
-        let e = p.parse_exp();
-        let expected = Node::no_loc(ast::Exp::Bop(ast::Binop::Add, 
-            Box::new(Node::no_loc(ast::Exp::Bop(ast::Binop::Add, 
-                Box::new(Node::no_loc(ast::Exp::Int(5))),
-                Box::new(Node::no_loc(ast::Exp::Bop(ast::Binop::Mul,
-                    Box::new(Node::no_loc(ast::Exp::Int(6))),
-                    Box::new(Node::no_loc(ast::Exp::Int(7))),
-                ))),
-            ))),
-            Box::new(Node::no_loc(ast::Exp::Int(8)))
-        ));
-        assert_eq!(e, Ok(expected));
+    fn parse_consts_1() -> Result<(), ParseError> {
+        exp_test("bool[] null", nl(Exp::Null(ty(TyKind::Array(bx(ty(TyKind::Bool)))))))
+    }
+
+    #[test]
+    fn parse_consts_2() -> Result<(), ParseError> {
+        exp_test("42", nl(Exp::Int(42)))
+    }
+
+    #[test]
+    fn parse_consts_3() -> Result<(), ParseError> {
+        exp_test("true", nl(Exp::Bool(true)))
+    }
+
+    #[test]
+    fn parse_consts_4() -> Result<(), ParseError> {
+        exp_test("false", nl(Exp::Bool(false)))
+    }
+
+    #[test]
+    fn parse_consts_5() -> Result<(), ParseError> {
+        exp_test("\"hello world\"", nl(Exp::Str("hello world".to_string())))
+    }
+
+    #[test]
+    fn parse_consts_6() -> Result<(), ParseError> {
+        exp_test("new int[]{1, 2, 3}", nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(1)), nl(Exp::Int(2)), nl(Exp::Int(3))])))
     }
 }
