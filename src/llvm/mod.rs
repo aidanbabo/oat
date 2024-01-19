@@ -19,8 +19,8 @@ pub fn parse(input: &str) -> ParseResult<ast::Prog> {
     parser::ProgParser::new().parse(input)
 }
 
-pub fn interp(prog: &ast::Prog, args: &[&str]) -> Result<i64, ExecError> {
-    interp::interp_prog(prog, args)
+pub fn interp(prog: &ast::Prog, args: &[&str]) -> Result<u8, ExecError> {
+    interp::interp_prog(prog, args).map(|i| i as u8)
 }
 
 pub fn print(prog: &ast::Prog) {

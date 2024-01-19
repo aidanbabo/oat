@@ -11,7 +11,7 @@ struct Args {
     #[arg(long)]
     print_ll: bool,
     #[arg(long)]
-    interp_ll: bool,
+    interpret_ll: bool,
 }
 
 fn main() {
@@ -52,9 +52,10 @@ fn main() {
         oat::llvm::print(&ll_prog);
     }
 
-    if args.interp_ll {
+    if args.interpret_ll {
         let prog_args: Vec<_> = args.args.iter().map(|s| &**s).collect();
         let r = oat::llvm::interp(&ll_prog, &prog_args).unwrap();
-        std::process::exit(r as i32);
+        println!("Interpreter Result: {r}");
+        return;
     }
 }

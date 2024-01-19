@@ -6,7 +6,7 @@ import subprocess
 import sys
 from typing import List
 
-OAT = 'target/debug/oat'
+OAT = 'target/release/oat'
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -58,21 +58,39 @@ def parse_tests(paths: List[str]) -> List[Test]:
         tests.append(t)
     return tests
 
-def run_test(test: Test) -> TestResult:
-    # todo: use tabs and longest test length
-    eprint(f"running test at {test.path}...", end='')
-    if test.skip and not test.passed_by_name:
-        eprint(f'SKIPPED ({test.skip})')
-        return TestResult.SKIPPED
-
-    # todo: special handling of interpreter to distinguish between interpreter crash and runtime crash
-    proc = subprocess.run([OAT, test.path, '--interp-ll'], stdout=subprocess.PIPE)
-
-    if proc.returncode != test.exitcode:
-        eprint(f"FAILED\nexpected an exit code of '{test.exitcode}' but it was '{proc.returncode}'")
+def eval_interp_test(test: Test, proc) -> TestResult:
+    if proc.returncode != 0:
+        eprint('FAILED INTERPRETER FAILED')
         return TestResult.FAILED
-    if proc.stdout != test.prints:
-        eprint(f"FAILED\nexpected printed output '{test.prints}' but it printed '{proc.stdout}'")
+
+    lines = proc.stdout.rstrip().rsplit(b'\n', 1)
+    if len(lines) == 2 and lines[1]:
+        last_line = lines[1]
+        prints = lines[0] + b'\n'
+    else:
+        last_line = lines[0]
+        prints = b''
+
+    line_split = last_line.rsplit(b' ', 1)
+    if len(line_split) != 2:
+        eprint('expected well formed last line')
+        eprint(last_line)
+        exit(1)
+    [msg, exitcodestr] = line_split
+
+    if msg == 'Interpreter Error:':
+        eprint(f'Interpreter Error: {exitcodestr}')
+        return TestResult.FAILED
+
+    exitcode = int(exitcodestr)
+    return eval_test(test, exitcode, prints)
+
+def eval_test(test: Test, exitcode: int, prints: bytes) -> TestResult:
+    if exitcode != test.exitcode:
+        eprint(f"FAILED\nexpected an exit code of '{test.exitcode}' but it was '{exitcode}'")
+        return TestResult.FAILED
+    if prints != test.prints:
+        eprint(f"FAILED\nexpected printed output '{test.prints}' but it printed '{prints}'")
         return TestResult.FAILED
 
     if test.todo:
@@ -80,6 +98,23 @@ def run_test(test: Test) -> TestResult:
     else:
         eprint('PASS')
     return TestResult.PASSED
+
+def run_test(test: Test) -> TestResult:
+    # todo: use tabs and longest test length
+    eprint(f"running test at {test.path}...", end='')
+    if test.skip and not test.passed_by_name:
+        eprint(f'SKIPPED ({test.skip})')
+        return TestResult.SKIPPED
+
+    proc_args = [OAT, test.path]
+    if args.interpret_ll:
+        proc_args.append('--interpret-ll')
+    proc = subprocess.run(proc_args, stdout=subprocess.PIPE)
+
+    if args.interpret_ll:
+        return eval_interp_test(test, proc)
+    else:
+        return eval_test(test, proc.returncode, proc.stdout)
 
 def filter_tests(tests: List[Test]) -> List[Test]:
     if args.category == 'all':
@@ -108,6 +143,11 @@ def list_tests(tests: List[Test]):
         print(t.path)
 
 def main():
+
+    if not args.interpret_ll:
+        eprint('must run through test through interpreter')
+        exit(1)
+
     cargo_build = subprocess.run(['cargo', 'build', '--release'])
     if cargo_build.returncode != 0:
         exit(1)
@@ -137,6 +177,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--category', choices=['all', 'none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized'], default='all')
     parser.add_argument('-l', '--list', action='store_true')
     parser.add_argument('--early', action='store_true')
+    parser.add_argument('--interpret-ll', action='store_true', default=True)
     args = parser.parse_args()
 
     main()
