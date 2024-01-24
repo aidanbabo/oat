@@ -1,4 +1,5 @@
 use std::ops;
+use std::fmt::{self, Debug};
 
 pub mod ast;
 mod lexer;
@@ -21,10 +22,16 @@ impl Range {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Node<T> {
     pub t: T,
     pub loc: Range,
+}
+
+impl<T: Debug> fmt::Debug for Node<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.t)
+    }
 }
 
 impl<T> Node<T> {

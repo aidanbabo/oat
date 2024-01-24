@@ -280,6 +280,8 @@ impl Parser {
         match self.peek().map(|t| t.kind) {
             Some(TokenKind::Var) => {
                 let Node { loc, t: vdecl } = self.parse_vdecl()?;
+                let end = self.assert_next_is(TokenKind::Semi)?.loc;
+                let loc = Range::merge(loc, end);
                 Ok(Node { loc, t: ast::Stmt::Decl(vdecl) })
             }
             Some(TokenKind::If | TokenKind::Ifq) => {
@@ -405,8 +407,13 @@ impl Parser {
 
     fn parse_block(&mut self) -> ParseResult<(ast::Block, Range)> {
         self.assert_next_is(TokenKind::LBrace)?;
-        let (stmts, end) = self.parse_separated(Parser::parse_stmt, TokenKind::Semi, TokenKind::RBrace)?;
-        Ok((stmts, end.loc))
+        let mut stmts = vec![];
+        while !self.test_next_is(TokenKind::RBrace) {
+            let stmt = self.parse_stmt()?;
+            stmts.push(stmt);
+        }
+        let end = self.assert_next_is(TokenKind::RBrace)?.loc;
+        Ok((stmts, end))
     }
 
     fn parse_vdecl(&mut self) -> ParseResult<Node<ast::Vdecl>> {
@@ -747,44 +754,58 @@ mod tests {
         Ty { nullable: true, kind }
     }
 
+    fn vd(s: &str, exp: Exp) -> Vdecl {
+        Vdecl {
+            name: s.to_string(),
+            exp: nl(exp),
+        }
+    }
+
     fn lex_toks(s: &str) -> Vec<Token> {
         crate::oat::lexer::Lexer::new(s).lex_all()
     }
 
     fn exp_test(s: &str, expected: Node<Exp>) -> Result<(), ParseError> {
         let tokens = lex_toks(s);
-        let e = Parser::new(tokens).parse_exp()?;
-        assert_eq!(e, expected);
+        let exp = Parser::new(tokens).parse_exp()?;
+        assert_eq!(exp, expected);
+        Ok(())
+    }
+
+    fn stmt_test(s: &str, expected: Node<Stmt>) -> Result<(), ParseError> {
+        let tokens = lex_toks(s);
+        let stmt = Parser::new(tokens).parse_stmt()?;
+        assert_eq!(stmt, expected);
         Ok(())
     }
 
     #[test]
-    fn parse_consts_1() -> Result<(), ParseError> {
+    fn parse_const_1() -> Result<(), ParseError> {
         exp_test("bool[] null", nl(Exp::Null(ty(TyKind::Array(bx(ty(TyKind::Bool)))))))
     }
 
     #[test]
-    fn parse_consts_2() -> Result<(), ParseError> {
+    fn parse_const_2() -> Result<(), ParseError> {
         exp_test("42", nl(Exp::Int(42)))
     }
 
     #[test]
-    fn parse_consts_3() -> Result<(), ParseError> {
+    fn parse_const_3() -> Result<(), ParseError> {
         exp_test("true", nl(Exp::Bool(true)))
     }
 
     #[test]
-    fn parse_consts_4() -> Result<(), ParseError> {
+    fn parse_const_4() -> Result<(), ParseError> {
         exp_test("false", nl(Exp::Bool(false)))
     }
 
     #[test]
-    fn parse_consts_5() -> Result<(), ParseError> {
+    fn parse_const_5() -> Result<(), ParseError> {
         exp_test("\"hello world\"", nl(Exp::Str("hello world".to_string())))
     }
 
     #[test]
-    fn parse_consts_6() -> Result<(), ParseError> {
+    fn parse_const_6() -> Result<(), ParseError> {
         exp_test("new int[]{1, 2, 3}", nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(1)), nl(Exp::Int(2)), nl(Exp::Int(3))])))
     }
 
@@ -919,5 +940,84 @@ mod tests {
     #[test]
     fn parse_exp_26() -> Result<(), ParseError> {
         exp_test("print_string (string_concat (str1, str2))", nl(Exp::Call(bnl(Exp::Id("print_string".to_string())), vec![nl(Exp::Call(bnl(Exp::Id("string_concat".to_string())), vec![nl(Exp::Id("str1".to_string())), nl(Exp::Id("str2".to_string()))]))])))
+    }
+
+    #[test]
+    fn parse_stmt_1() -> Result<(), ParseError> {
+        stmt_test("var n = 8;", nl(Stmt::Decl(vd("n", Exp::Int(8)))))
+    }
+
+    #[test]
+    fn parse_stmt_2() -> Result<(), ParseError> {
+        stmt_test("var x=a[0];", nl(Stmt::Decl(vd("x", Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Int(0)))))))
+    }
+
+    #[test]
+    fn parse_stmt_3() -> Result<(), ParseError> {
+        stmt_test("return;", nl(Stmt::Ret(None)))
+    }
+
+    #[test]
+    fn parse_stmt_4() -> Result<(), ParseError> {
+        stmt_test("return x+y;", nl(Stmt::Ret(Some(nl(Exp::Bop(Binop::Add, bnl(Exp::Id("x".to_string())), bnl(Exp::Id("y".to_string()))))))))
+    }
+
+    #[test]
+    fn parse_stmt_5() -> Result<(), ParseError> {
+        stmt_test("a[j>>1]=v;", nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Bop(Binop::Shr, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1)))))), nl(Exp::Id("v".to_string())))))
+    }
+
+    #[test]
+    fn parse_stmt_6() -> Result<(), ParseError> {
+        stmt_test("foo(a,1,n);", nl(Stmt::Call(nl(Exp::Id("foo".to_string())), vec![nl(Exp::Id("a".to_string())), nl(Exp::Int(1)), nl(Exp::Id("n".to_string()))])))
+    }
+
+    #[test]
+    fn parse_stmt_7() -> Result<(), ParseError> {
+        stmt_test("a[i]=a[i>>1];", nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Id("i".to_string())))), nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Bop(Binop::Shr, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1)))))))))
+    }
+
+    #[test]
+    fn parse_stmt_8() -> Result<(), ParseError> {
+        stmt_test("var a = new int[8];", nl(Stmt::Decl(vd("a", Exp::ArrLen(ty(TyKind::Int), bnl(Exp::Int(8)))))))
+    }
+
+    #[test]
+    fn parse_stmt_9() -> Result<(), ParseError> {
+        stmt_test("if((j<n)&(a[j]<a[j+1])) { j=j+1; }", nl(Stmt::If(nl(Exp::Bop(Binop::And, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Id("j".to_string())), bnl(Exp::Id("n".to_string())))), bnl(Exp::Bop(Binop::Lt, bnl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Id("j".to_string())))), bnl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Bop(Binop::Add, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1)))))))))), vec![nl(Stmt::Assn(nl(Exp::Id("j".to_string())), nl(Exp::Bop(Binop::Add, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1))))))], vec![])))
+    }
+
+    #[test]
+    fn parse_stmt_10() -> Result<(), ParseError> {
+        fn decl(s: &str) -> Node<Stmt> {
+            nl(Stmt::Decl(vd(s, Exp::Int(0))))
+        }
+        stmt_test("if(c == 1) { var i = 0; var j = 0; var k = 0; }", nl(Stmt::If(nl(Exp::Bop(Binop::Eq, bnl(Exp::Id("c".to_string())), bnl(Exp::Int(1)))), vec![decl("i"), decl("j"), decl("k")], vec![])))
+    }
+
+    #[test]
+    fn parse_stmt_11() -> Result<(), ParseError> {
+        let ishift = Exp::Bop(Binop::Shr, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1)));
+        let ashift = Exp::Index(bnl(Exp::Id("a".to_string())), bnl(ishift.clone()));
+        stmt_test("while((i>1)&(a[i>>1]<v)) { a[i]=a[i>>1]; i=i>>1; }", nl(Stmt::While(nl(Exp::Bop(Binop::And, bnl(Exp::Bop(Binop::Gt, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1)))), bnl(Exp::Bop(Binop::Lt, bnl(ashift.clone()), bnl(Exp::Id("v".to_string())))))), vec![nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Id("i".to_string())))), nl(ashift.clone()))), nl(Stmt::Assn(nl(Exp::Id("i".to_string())), nl(ishift.clone())))])))
+    }
+
+    #[test]
+    fn parse_stmt_12() -> Result<(), ParseError> {
+        fn assn(lhs: Exp, rhs: Exp) -> Node<Stmt> {
+            nl(Stmt::Assn(nl(lhs), nl(rhs)))
+        }
+        let nums_i = Exp::Index(bnl(Exp::Id("numbers".to_string())), bnl(Exp::Id("i".to_string())));
+        let nums_j = Exp::Index(bnl(Exp::Id("numbers".to_string())), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1)))));
+        let temp = Exp::Id("temp".to_string());
+
+        let inner_if = nl(Stmt::If(nl(Exp::Bop(Binop::Gt, bnl(nums_j.clone()), bnl(nums_i.clone()))), vec![assn(temp.clone(), nums_j.clone()), assn(nums_j.clone(), nums_i.clone()), assn(nums_i.clone(), temp.clone())], vec![]));
+        let inner_for = nl(Stmt::For(vec![vd("j", Exp::Int(1))], Some(nl(Exp::Bop(Binop::Lte, bnl(Exp::Id("j".to_string())), bnl(Exp::Id("i".to_string()))))), Some(bnl(Stmt::Assn(nl(Exp::Id("j".to_string())), nl(Exp::Bop(Binop::Add, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1))))))), vec![inner_if]));
+        stmt_test("for (; i > 0; i=i-1;) { for (var j = 1; j <= i; j=j+1;) { if (numbers[j-1] > numbers[i]) { temp = numbers[j-1]; numbers[j-1] = numbers[i]; numbers[i] = temp; } } }", nl(Stmt::For(vec![], Some(nl(Exp::Bop(Binop::Gt, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(0))))), Some(bnl(Stmt::Assn(nl(Exp::Id("i".to_string())), nl(Exp::Bop(Binop::Sub, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1))))))), vec![inner_for])))
+    }
+
+    #[test]
+    fn parse_stmt_13() -> Result<(), ParseError> {
+        stmt_test("for (var i = 0, var j = 0; ;) { }", nl(Stmt::For(vec![vd("i", Exp::Int(0)), vd("j", Exp::Int(0))], None, None, vec![])))
     }
 }

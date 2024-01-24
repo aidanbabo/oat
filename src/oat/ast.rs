@@ -2,7 +2,7 @@ use super::Node;
 
 pub type Ident = String;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ty {
     pub kind: TyKind,
     pub nullable: bool,
@@ -17,7 +17,7 @@ impl Ty {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TyKind {
     Void,
     Bool,
@@ -35,14 +35,14 @@ impl TyKind {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Unop {
     Neg,
     LogNot,
     BitNot,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Binop {
     Add,
     Sub,
@@ -62,7 +62,7 @@ pub enum Binop {
     Sar,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Exp {
     Null(Ty),
     Bool(bool),
@@ -82,7 +82,7 @@ pub enum Exp {
     Uop(Unop, Box<Node<Exp>>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Vdecl {
     pub name: Ident,
     pub exp: Node<Exp>,
@@ -90,7 +90,7 @@ pub struct Vdecl {
 
 pub type Block = Vec<Node<Stmt>>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
     Assn(Node<Exp>, Node<Exp>),
     Decl(Vdecl),
@@ -102,13 +102,13 @@ pub enum Stmt {
     While(Node<Exp>, Block),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Gdecl {
     pub name: Ident,
     pub init: Node<Exp>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Fdecl {
     pub ret_ty: Ty,
     pub name: String,
@@ -116,19 +116,19 @@ pub struct Fdecl {
     pub body: Block,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Field {
     pub name: Ident,
     pub ty: Ty,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Tdecl {
     pub name: Ident,
     pub fields: Vec<Field>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Decl {
     Var(Node<Gdecl>),
     Fun(Node<Fdecl>),
