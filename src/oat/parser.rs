@@ -479,7 +479,7 @@ impl Parser {
 
     fn parse_new_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
         let new_loc = self.consume().unwrap().loc;
-        let ty = self.parse_type()?; // todo: fumbles `new int[3]`
+        let ty = self.parse_type()?;
         let open = self.consume();
         match open.map(|o| o.kind) {
             Some(TokenKind::LBracket) => {
@@ -731,8 +731,16 @@ mod tests {
         Box::new(t)
     }
 
+    fn bnl<T>(t: T) -> Box<Node<T>> {
+        bx(nl(t))
+    }
+
     fn ty(kind: TyKind) -> Ty {
         Ty { nullable: false, kind }
+    }
+
+    fn bty(kind: TyKind) -> Box<Ty> {
+        bx(ty(kind))
     }
 
     fn nty(kind: TyKind) -> Ty {
@@ -778,5 +786,138 @@ mod tests {
     #[test]
     fn parse_consts_6() -> Result<(), ParseError> {
         exp_test("new int[]{1, 2, 3}", nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(1)), nl(Exp::Int(2)), nl(Exp::Int(3))])))
+    }
+
+    #[test]
+    fn parse_exp_1() -> Result<(), ParseError> {
+        exp_test("1", nl(Exp::Int(1)))
+    }
+
+    #[test]
+    fn parse_exp_2() -> Result<(), ParseError> {
+        exp_test("1+2", nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))))
+    }
+
+    #[test]
+    fn parse_exp_3() -> Result<(), ParseError> {
+        exp_test("1+2+3", nl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Int(3)))))
+    }
+
+    #[test]
+    fn parse_exp_4() -> Result<(), ParseError> {
+        exp_test("1+2*3", nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))))
+    }
+
+    #[test]
+    fn parse_exp_5() -> Result<(), ParseError> {
+        exp_test("1+(2+3)", nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))))
+    }
+
+    #[test]
+    fn parse_exp_6() -> Result<(), ParseError> {
+        exp_test("(1+2)*3", nl(Exp::Bop(Binop::Mul, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Int(3)))))
+    }
+
+    #[test]
+    fn parse_exp_7() -> Result<(), ParseError> {
+        exp_test("1+2*3+4", nl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Int(4)))))
+    }
+
+    #[test]
+    fn parse_exp_8() -> Result<(), ParseError> {
+        exp_test("1-2 == 3+4", nl(Exp::Bop(Binop::Eq, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(3)), bnl(Exp::Int(4)))))))
+    }
+
+    #[test]
+    fn parse_exp_9() -> Result<(), ParseError> {
+        exp_test("(1+2)*(3+4)", nl(Exp::Bop(Binop::Mul, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(3)), bnl(Exp::Int(4)))))))
+    }
+
+    #[test]
+    fn parse_exp_10() -> Result<(), ParseError> {
+        exp_test("true & true | false", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))), bnl(Exp::Bool(false)))))
+    }
+
+    #[test]
+    fn parse_exp_11() -> Result<(), ParseError> {
+        exp_test("true & (true | false)", nl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bool(true)), bnl(Exp::Bool(false)))))))
+    }
+
+    #[test]
+    fn parse_exp_12() -> Result<(), ParseError> {
+        exp_test("!(~5 == ~6) & -5+10 < 0", nl(Exp::Bop(Binop::And, bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Bop(Binop::Eq, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(5)))), bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(6)))))))), bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Add, bnl(Exp::Uop(Unop::Neg, bnl(Exp::Int(5)))), bnl(Exp::Int(10)))), bnl(Exp::Int(0)))))))
+    }
+
+    #[test]
+    fn parse_exp_13() -> Result<(), ParseError> {
+        exp_test("1+2 >> (3-4 >>> 7*8) << 9", nl(Exp::Bop(Binop::Shl, bnl(Exp::Bop(Binop::Shr, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Sar, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(3)), bnl(Exp::Int(4)))), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(7)), bnl(Exp::Int(8)))))))), bnl(Exp::Int(9)))))
+    }
+
+    #[test]
+    fn parse_exp_14() -> Result<(), ParseError> {
+        exp_test("~5 >> 7 - 10 < 9 * -6-4 | !false", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Shr, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(5)))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(7)), bnl(Exp::Int(10)))))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(9)), bnl(Exp::Uop(Unop::Neg, bnl(Exp::Int(6)))))), bnl(Exp::Int(4)))))), bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Bool(false)))))))
+    }
+
+    #[test]
+    fn parse_exp_15() -> Result<(), ParseError> {
+        exp_test("false == 2 >= 3 | true !=  9 - 10 <= 4", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Eq, bnl(Exp::Bool(false)), bnl(Exp::Bop(Binop::Gte, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Bop(Binop::Neq, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Lte, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(9)), bnl(Exp::Int(10)))), bnl(Exp::Int(4)))))))))
+    }
+
+    #[test]
+    fn parse_exp_16() -> Result<(), ParseError> {
+        exp_test("1-2*3+4 < 5 | 6+7-2 > 1 | true & false", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Int(4)))), bnl(Exp::Int(5)))), bnl(Exp::Bop(Binop::Gt, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(6)), bnl(Exp::Int(7)))), bnl(Exp::Int(2)))), bnl(Exp::Int(1)))))), bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(false)))))))
+    }
+
+    #[test]
+    fn parse_exp_17() -> Result<(), ParseError> {
+        exp_test("true [&] false | false [|] true & true", nl(Exp::Bop(Binop::IOr, bnl(Exp::Bop(Binop::IAnd, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bool(false)), bnl(Exp::Bool(false)))))), bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))))))
+    }
+
+    #[test]
+    fn parse_exp_18() -> Result<(), ParseError> {
+        exp_test("true [|] false [&] true & true | false", nl(Exp::Bop(Binop::IOr, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::IAnd, bnl(Exp::Bool(false)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))), bnl(Exp::Bool(false)))))))))
+    }
+
+    #[test]
+    fn parse_exp_19() -> Result<(), ParseError> {
+        exp_test("new int[3]", nl(Exp::ArrLen(ty(TyKind::Int), bnl(Exp::Int(3)))))
+    }
+
+    #[test]
+    fn parse_exp_20() -> Result<(), ParseError> {
+        exp_test("bar (x, \"cis341\")", nl(Exp::Call(bnl(Exp::Id("bar".to_string())), vec![nl(Exp::Id("x".to_string())), nl(Exp::Str("cis341".to_string()))])))
+    }
+
+    #[test]
+    fn parse_exp_21() -> Result<(), ParseError> {
+        fn inta_maker(a: i64, b: i64) -> Node<Exp> {
+            nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(a)), nl(Exp::Int(b))]))
+        }
+        exp_test("new int[][]{new int[]{10,11},new int[]{20,21},new int[]{30,31}}", nl(Exp::ArrElems(ty(TyKind::Array(bty(TyKind::Int))), vec![inta_maker(10, 11), inta_maker(20, 21), inta_maker(30, 31)])))
+    }
+
+    #[test]
+    fn parse_exp_22() -> Result<(), ParseError> {
+        exp_test("proc1 ()", nl(Exp::Call(bnl(Exp::Id("proc1".to_string())), vec![])))
+    }
+
+    #[test]
+    fn parse_exp_23() -> Result<(), ParseError> {
+        exp_test("array[0]", nl(Exp::Index(bnl(Exp::Id("array".to_string())), bnl(Exp::Int(0)))))
+    }
+
+    #[test]
+    fn parse_exp_24() -> Result<(), ParseError> {
+        exp_test("i + y[1][1]", nl(Exp::Bop(Binop::Add, bnl(Exp::Id("i".to_string())), bnl(Exp::Index(bnl(Exp::Index(bnl(Exp::Id("y".to_string())), bnl(Exp::Int(1)))), bnl(Exp::Int(1)))))))
+    }
+
+    #[test]
+    fn parse_exp_25() -> Result<(), ParseError> {
+        exp_test("-!~x[0][0]", nl(Exp::Uop(Unop::Neg, bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Index(bnl(Exp::Index(bnl(Exp::Id("x".to_string())), bnl(Exp::Int(0)))), bnl(Exp::Int(0)))))))))))
+    }
+
+    #[test]
+    fn parse_exp_26() -> Result<(), ParseError> {
+        exp_test("print_string (string_concat (str1, str2))", nl(Exp::Call(bnl(Exp::Id("print_string".to_string())), vec![nl(Exp::Call(bnl(Exp::Id("string_concat".to_string())), vec![nl(Exp::Id("str1".to_string())), nl(Exp::Id("str2".to_string()))]))])))
     }
 }
