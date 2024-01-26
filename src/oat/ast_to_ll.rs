@@ -123,7 +123,31 @@ impl Context {
             oast::Exp::Struct(_, _) => todo!(),
             oast::Exp::Proj(_, _) => todo!(),
             oast::Exp::Call(_, _) => todo!(),
-            oast::Exp::Bop(_, _, _) => todo!(),
+            oast::Exp::Bop(obop, lhs, rhs) => {
+                let e1 = self.exp(fun_ctx, lhs.t);
+                let e2 = self.exp(fun_ctx, rhs.t);
+                let insn = match obop {
+                    oast::Binop::Add => llast::Insn::Binop(llast::Bop::Add, llast::Ty::I64, e1, e2),
+                    oast::Binop::Sub => llast::Insn::Binop(llast::Bop::Sub, llast::Ty::I64, e1, e2),
+                    oast::Binop::Mul => llast::Insn::Binop(llast::Bop::Mul, llast::Ty::I64, e1, e2),
+                    oast::Binop::Eq => todo!(),
+                    oast::Binop::Neq => todo!(),
+                    oast::Binop::Lt => llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I64, e1, e2),
+                    oast::Binop::Lte => llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I64, e1, e2),
+                    oast::Binop::Gt => llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I64, e1, e2),
+                    oast::Binop::Gte => llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I64, e1, e2),
+                    oast::Binop::And => llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I1, e1, e2),
+                    oast::Binop::Or => llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I1, e1, e2),
+                    oast::Binop::IAnd => llast::Insn::Binop(llast::Bop::And, llast::Ty::I64, e1, e2),
+                    oast::Binop::IOr => llast::Insn::Binop(llast::Bop::Or, llast::Ty::I64, e1, e2),
+                    oast::Binop::Shl => llast::Insn::Binop(llast::Bop::Shl, llast::Ty::I64, e1, e2),
+                    oast::Binop::Shr => llast::Insn::Binop(llast::Bop::Lshr, llast::Ty::I64, e1, e2),
+                    oast::Binop::Sar => llast::Insn::Binop(llast::Bop::Ashr, llast::Ty::I64, e1, e2),
+                };
+                let uid = self.gensym("_exp");
+                fun_ctx.cfg.current().insns.push((uid.clone(), insn));
+                llast::Operand::Id(uid)
+            },
             oast::Exp::Uop(_, _) => todo!(),
         }
     }
