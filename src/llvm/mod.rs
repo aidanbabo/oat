@@ -23,7 +23,8 @@ pub fn interp(prog: &ast::Prog, args: &[&str]) -> Result<u8, ExecError> {
     interp::interp_prog(prog, args).map(|i| i as u8)
 }
 
-pub fn print(prog: &ast::Prog) {
-    print::print(prog)
-}
+pub use print::write;
 
+pub fn print(prog: &ast::Prog) {
+    let _ = write(std::io::stdout().lock(), prog);
+}

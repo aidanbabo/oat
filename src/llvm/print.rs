@@ -1,8 +1,9 @@
 use super::ast::*;
 use std::fmt;
+use std::io;
 
-pub fn print(prog: &Prog) {
-    println!("{prog}")
+pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
+    write!(w, "{prog}")
 }
 
 pub struct Separated<'a, T, U>(pub &'static str, pub &'a (T, U));

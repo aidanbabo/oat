@@ -2,6 +2,7 @@ use clap::Parser;
 
 use std::path::PathBuf;
 use std::fs;
+use std::process;
 
 #[derive(Parser)]
 struct Args {
@@ -12,6 +13,8 @@ struct Args {
     print_ll: bool,
     #[arg(long)]
     interpret_ll: bool,
+    #[arg(long, default_value_t = true)]
+    clang: bool,
 }
 
 fn main() {
@@ -31,9 +34,7 @@ fn main() {
             }
         };
 
-        println!("{prog:?}");
-        // todo: convert to llvmir
-        return;
+        oat::oat::to_llvm(prog)
     } else if ext == "ll" {
         let s = fs::read_to_string(&args.path).unwrap();
         match oat::llvm::parse(&s) {
@@ -58,4 +59,27 @@ fn main() {
         println!("Interpreter Result: {r}");
         return;
     }
+
+    let _ = fs::create_dir("output");
+
+    let base_name = args.path.file_stem().unwrap();
+    let mut path = PathBuf::from("output").join(base_name);
+    path.set_extension("ll");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    oat::llvm::write(file, &ll_prog).unwrap();
+
+    if args.clang {
+        process::Command::new("clang")
+            .arg("runtime.c")
+            .arg(&path)
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+    }
 }
+

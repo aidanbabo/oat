@@ -4,6 +4,9 @@ use std::fmt::{self, Debug};
 pub mod ast;
 mod lexer;
 mod parser;
+mod ast_to_ll;
+
+use crate::llvm;
 
 
 /// Row-column pairs
@@ -63,10 +66,12 @@ impl<T: PartialEq> PartialEq for Node<T> {
 pub fn parse(input: &str) -> Result<ast::Prog, Box<dyn std::error::Error>> {
     let mut l = lexer::Lexer::new(input);
     let tokens = l.lex_all();
-    for t in &tokens {
-        println!("{t:?}");
-    }
     let prog = parser::Parser::new(tokens).parse_program()?;
     Ok(prog)
 }
 
+pub fn to_llvm(oprog: ast::Prog) -> llvm::ast::Prog {
+    let context = ast_to_ll::Context::new();
+
+    context.lower(oprog)
+}
