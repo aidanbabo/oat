@@ -42,7 +42,7 @@ impl Context {
     }
 
     fn gensym(&mut self, s: &str) -> String {
-        let s = format!("{s}{}", self.sym_num);
+        let s = format!("_{s}{}", self.sym_num);
         self.sym_num += 1;
         s
     }
@@ -144,7 +144,7 @@ impl Context {
                     oast::Binop::Shr => llast::Insn::Binop(llast::Bop::Lshr, llast::Ty::I64, e1, e2),
                     oast::Binop::Sar => llast::Insn::Binop(llast::Bop::Ashr, llast::Ty::I64, e1, e2),
                 };
-                let uid = self.gensym("_exp");
+                let uid = self.gensym("tmp");
                 fun_ctx.cfg.current().insns.push((uid.clone(), insn));
                 llast::Operand::Id(uid)
             },

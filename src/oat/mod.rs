@@ -5,6 +5,7 @@ pub mod ast;
 mod lexer;
 mod parser;
 mod ast_to_ll;
+mod print;
 
 use crate::llvm;
 
@@ -74,4 +75,10 @@ pub fn to_llvm(oprog: ast::Prog) -> llvm::ast::Prog {
     let context = ast_to_ll::Context::new();
 
     context.lower(oprog)
+}
+
+pub use print::write;
+
+pub fn print(prog: &ast::Prog) {
+    let _ = write(std::io::stdout().lock(), prog);
 }

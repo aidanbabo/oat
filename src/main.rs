@@ -10,6 +10,8 @@ struct Args {
     // todo: support multiple files, idk how that will interact with passing args with --execute-asm/x86
     args: Vec<String>,
     #[arg(long)]
+    print_oat: bool,
+    #[arg(long)]
     print_ll: bool,
     #[arg(long)]
     interpret_ll: bool,
@@ -33,6 +35,10 @@ fn main() {
                 return;
             }
         };
+
+        if args.print_oat {
+            oat::oat::print(&prog);
+        }
 
         oat::oat::to_llvm(prog)
     } else if ext == "ll" {
