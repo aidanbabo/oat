@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 6 */
 int program (int argc, string[] argv) {
   var x = 0;
   for (var i=0; i<3; i = i+1;) {

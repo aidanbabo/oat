@@ -1,3 +1,6 @@
+/*category globals */
+/*exitcode 15 */
+/*skip no string support */
 int program(int argc, string[] args) {
   var s = "hello!";
   return 15;

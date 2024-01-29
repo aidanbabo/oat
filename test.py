@@ -17,6 +17,7 @@ class Test:
     exitcode: int = 0
     category: str = 'none'
     skip: str = ''
+    interp_skip: str = ''
     todo: bool = False
     prints: str = b''
     passed_by_name: bool = False
@@ -27,12 +28,24 @@ class TestResult(Enum):
     SKIPPED = 2
 
 def parse_test(filepath: str) -> Test:
+    comment_str = '/*' if filepath.suffix == '.oat' else ';;'
+
     test_options = []
     with open(filepath) as testfile:
         for line in testfile:
-            if not line.startswith(';;'):
+            if not line.startswith(comment_str):
                 break
-            opt, rest = line[2:].strip().split(' ', 1)
+
+            if filepath.suffix == '.oat':
+                split = line[2:-3].strip().split(' ', 1)
+            else:
+                split = line[2:].strip().split(' ', 1)
+            if len(split) == 2:
+                opt, rest = split
+            else:
+                if args.debug:
+                    eprint('strange split length')
+                continue
             test_options.append((opt, rest))
 
     test = Test(filepath)
@@ -43,11 +56,13 @@ def parse_test(filepath: str) -> Test:
             test.category = rest
         elif opt == 'skip':
             test.skip = rest
+        elif opt == 'interp_skip' and args.interpret_ll:
+            test.skip = '(interpreter only) ' + rest
         elif opt == 'todo':
             test.todo = rest
         elif opt == 'prints':
             test.prints = (rest + '\n').encode('utf8')
-        else:
+        elif args.debug:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
 
@@ -109,11 +124,17 @@ def run_test(test: Test) -> TestResult:
     proc_args = [OAT, test.path]
     if args.interpret_ll:
         proc_args.append('--interpret-ll')
+    if args.clang:
+        proc_args.append('--clang')
     proc = subprocess.run(proc_args, stdout=subprocess.PIPE)
 
     if args.interpret_ll:
         return eval_interp_test(test, proc)
     else:
+        if proc.returncode != 0:
+            eprint('FAILED\ncompilation failed')
+            return TestResult.FAILED
+        proc = subprocess.run('./a.out', stdout=subprocess.PIPE)
         return eval_test(test, proc.returncode, proc.stdout)
 
 def filter_tests(tests: List[Test]) -> List[Test]:
@@ -144,8 +165,8 @@ def list_tests(tests: List[Test]):
 
 def main():
 
-    if not args.interpret_ll:
-        eprint('must run through test through interpreter')
+    if not (args.interpret_ll or args.clang):
+        eprint('must run through test through interpreter or use clang backend')
         exit(1)
 
     cargo_build = subprocess.run(['cargo', 'build', '--release'])
@@ -155,6 +176,9 @@ def main():
     if args.suite == 'all':
         eprint('the only supported testing right now is llvm')
         return
+    if args.suite == 'hw4':
+        hw4_files = [p for p in pathlib.Path('tests/programs/hw4programs').glob('*.oat')]
+        tests = parse_tests(hw4_files)
     elif args.suite == 'llvm':
         ll_files = [p for p in pathlib.Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
         tests = parse_tests(ll_files)
@@ -172,12 +196,17 @@ def main():
         run_tests(tests)
 
 if __name__ == '__main__':
+    llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
+    hw4_test_categories = ['easiest', 'globals']
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('suite', default='all', help="expected a suite name like 'all', 'llvm', or a filename", nargs='?')
-    parser.add_argument('-c', '--category', choices=['all', 'none', 'binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized'], default='all')
+    parser.add_argument('suite', default='all', choices=['all', 'llvm', 'hw4'],  nargs='?')
+    parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories, default='all')
     parser.add_argument('-l', '--list', action='store_true')
     parser.add_argument('--early', action='store_true')
-    parser.add_argument('--interpret-ll', action='store_true', default=True)
+    parser.add_argument('--interpret-ll', action='store_true', default=False)
+    parser.add_argument('--clang', action='store_true', default=False)
+    parser.add_argument('--debug', action='store_true', default=False)
     args = parser.parse_args()
 
     main()

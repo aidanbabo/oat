@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 160 */
 int program (int argc, string[] argv) {
     if(6 != 5) {
       return ~(5 >> --6 << 9 >>> 10) * 2 - 100 + 6;

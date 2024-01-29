@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 73 */
 int program (int argc, string[] argv) {
   var x = 0;
   var i = 0;

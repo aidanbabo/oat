@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 17 */
 int program (int argc, string[] argv) {
   return 17;
 }

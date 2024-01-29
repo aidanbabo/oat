@@ -1,3 +1,6 @@
+/*category globals */
+/*exitcode 17 */
+/*skip no string support */
 global s = "hello!";
 
 int program(int argc, string[] args) {

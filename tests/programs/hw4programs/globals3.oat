@@ -1,3 +1,5 @@
+/*category globals */
+/*exitcode 17 */
 global arr = int[] null;
 
 int program(int argc, string[] args) {

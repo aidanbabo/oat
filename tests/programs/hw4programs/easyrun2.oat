@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 35 */
 int program (int argc, string[] argv) {
   return 17 + 18;
 }

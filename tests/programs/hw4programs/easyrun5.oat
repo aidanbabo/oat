@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 212 */
 int program (int argc, string[] argv) {
   var x = 100 >> 3;
   var y = 100 << 3;

@@ -184,7 +184,7 @@ impl fmt::Display for Ginit {
             Ginit::Null => write!(f, "null"),
             Ginit::Gid(g) => write!(f, "@{g}"),
             Ginit::Int(i) => write!(f, "{i}"),
-            Ginit::String(s) => write!(f, "c\"{s}\0\""),
+            Ginit::String(s) => write!(f, "c\"{s}\""),
             Ginit::Array(gis) => {
                 write!(f, "[")?;
                 write_separated(f, ", ", gis.iter().map(|t| Separated(" ", t)))?;

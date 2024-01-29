@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::ast as oast;
+use super::{ast as oast, Node};
 use crate::llvm::ast as llast;
 
 struct FunContext {
@@ -11,7 +11,7 @@ struct FunContext {
 
 pub struct Context {
     llprog: llast::Prog,
-    globals: HashMap<String, String>,
+    globals: HashMap<oast::Ident, (llast::Gid, llast::Ty)>,
     sym_num: usize,
 }
 
@@ -29,6 +29,7 @@ impl Context {
         }
     }
 
+    // todo: order independent top level ?
     pub fn lower(mut self, oprog: oast::Prog) -> llast::Prog {
         for decl in oprog {
             match decl {
@@ -48,7 +49,17 @@ impl Context {
     }
 
     fn global(&mut self, v: oast::Gdecl) {
-        todo!()
+        let (ty, op) = match v.init.t {
+            oast::Exp::Null(t) => (tipe(t), llast::Ginit::Null),
+            oast::Exp::Bool(b) => (llast::Ty::I1, llast::Ginit::Int(b as i64)),
+            oast::Exp::Int(i) => (llast::Ty::I64, llast::Ginit::Int(i)),
+            oast::Exp::Str(_) => todo!(),
+            oast::Exp::Id(_) => todo!(),
+            oast::Exp::ArrElems(_, _) => todo!(),
+            _ => unreachable!(),
+        };
+        self.llprog.gdecls.push((v.name.clone(), (ty.clone(), op)));
+        assert!(self.globals.insert(v.name.clone(), (v.name, ty)).is_none());
     }
 
     fn function(&mut self, func: oast::Fdecl) {
@@ -58,6 +69,9 @@ impl Context {
             params: arg_tys,
             ret: ret_ty,
         };
+
+        let ty_fun = llast::Ty::Fun(fun_ty.params.clone(), Box::new(fun_ty.ret.clone()));
+        assert!(self.globals.insert(func.name.clone(), (func.name.clone(), ty_fun)).is_none());
 
         let mut fun_ctx = FunContext {
             cfg: llast::Cfg {
@@ -76,6 +90,9 @@ impl Context {
         }
 
         self.block(&mut fun_ctx, func.body);
+
+        // todo: temp fix, doesn't even fully work
+        fun_ctx.cfg.blocks.retain(|(lbl, _)| !lbl.starts_with("__unreachable"));
 
         let fdecl = llast::Fdecl {
             ty: fun_ty,
@@ -110,7 +127,10 @@ impl Context {
                 // todo: crappy codegen :/
                 fun_ctx.cfg.blocks.push((self.gensym("_unreachable"), empty_block(&fun_ctx.ret_ty)));
             },
-            oast::Stmt::Call(_, _) => todo!(),
+            oast::Stmt::Call(f, args) => {
+                let uid = self.gensym("_");
+                self.call(fun_ctx, f.t, args, uid);
+            }
             oast::Stmt::If(cnd, if_blk, else_blk) => {
                 let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
                 let then_lbl = self.gensym("then");
@@ -200,7 +220,10 @@ impl Context {
             oast::Exp::ArrInit(_, _, _, _) => todo!(),
             oast::Exp::Length(_) => todo!(),
             oast::Exp::Struct(_, _) => todo!(),
-            oast::Exp::Call(_, _) => todo!(),
+            oast::Exp::Call(f, args) => {
+                let uid = self.gensym("call");
+                self.call(fun_ctx, f.t, args, uid)
+            },
             oast::Exp::Bop(obop, lhs, rhs) => {
                 let (op1, t1) = self.exp(fun_ctx, lhs.t);
                 let (op2, t2) = self.exp(fun_ctx, rhs.t);
@@ -237,7 +260,7 @@ impl Context {
                         (t1.clone(), llast::Insn::Icmp(bop, t1.clone(), op1, op2))
                     }
                 };
-                let uid = self.gensym("tmp");
+                let uid = self.gensym("bop");
                 fun_ctx.cfg.current().insns.push((uid.clone(), insn));
                 (llast::Operand::Id(uid), t3)
             },
@@ -248,38 +271,67 @@ impl Context {
                     oast::Unop::LogNot => (llast::Ty::I1, llast::Insn::Icmp(llast::Cnd::Eq, llast::Ty::I1, llast::Operand::Const(0), e1)),
                     oast::Unop::BitNot => (llast::Ty::I64, llast::Insn::Binop(llast::Bop::Xor, llast::Ty::I64, llast::Operand::Const(-1), e1)),
                 };
-                let uid = self.gensym("tmp");
+                let uid = self.gensym("uop");
                 fun_ctx.cfg.current().insns.push((uid.clone(), insn));
                 (llast::Operand::Id(uid), t2)
             }
-            oast::Exp::Id(..) | oast::Exp::Proj(..) | oast::Exp::Index(..) => {
-                let (ptr_operand, pointee_ty) = self.lhs(fun_ctx, exp);
-                let load_insn = llast::Insn::Load(pointee_ty.clone(), ptr_operand);
-                let load_uid = self.gensym("tmp"); // todo: better name?
-                fun_ctx.cfg.current().insns.push((load_uid.clone(), load_insn));
-                (llast::Operand::Id(load_uid), pointee_ty.clone())
+            e@(oast::Exp::Id(..) | oast::Exp::Proj(..) | oast::Exp::Index(..)) => {
+                let name = match &e {
+                    oast::Exp::Id(id) => id.clone(),
+                    oast::Exp::Proj(_, field) => field.clone(),
+                    oast::Exp::Index(..) => "index".to_string(),
+                    _ => unreachable!(),
+                };
+                let (ptr_operand, pointee_ty) = self.lhs(fun_ctx, e);
+                if let llast::Ty::Fun(..) = &pointee_ty {
+                    (ptr_operand, llast::Ty::Ptr(Box::new(pointee_ty)))
+                } else {
+                    let load_uid = self.gensym(&name);
+                    let load_insn = llast::Insn::Load(pointee_ty.clone(), ptr_operand);
+                    fun_ctx.cfg.current().insns.push((load_uid.clone(), load_insn));
+                    (llast::Operand::Id(load_uid), pointee_ty.clone())
+                }
             }
         };
 
         (op, ty)
     }
 
+    fn call(&mut self, fun_ctx: &mut FunContext, f: oast::Exp, args: Vec<Node<oast::Exp>>, uid: llast::Uid) -> (llast::Operand, llast::Ty) {
+        let (fop, tf) = self.exp(fun_ctx, f);
+        let llast::Ty::Ptr(p) = tf else { unreachable!() };
+        let llast::Ty::Fun(_, ret_ty) = *p else { unreachable!() };
+        let args: Vec<_> = args.into_iter().map(|a| {
+            let (op, t) = self.exp(fun_ctx, a.t);
+            (t, op)
+        }).collect();
+        fun_ctx.cfg.current().insns.push((uid.clone(), llast::Insn::Call((*ret_ty).clone(), fop, args)));
+        (llast::Operand::Id(uid), *ret_ty)
+    }
+
     /// will always return the storage slot
     fn lhs(&mut self, fun_ctx: &mut FunContext, lhs: oast::Exp) -> (llast::Operand, llast::Ty) {
         match lhs {
             oast::Exp::Id(id) => {
-                // todo: support globals
                 // todo: support multiple scopes
-                let (ptr_uid, ty) = fun_ctx.locals.get(&id).expect("can't find local variable");
-                (llast::Operand::Id(ptr_uid.clone()), ty.clone())
-            },
+                if let Some((ptr_uid, ty)) = fun_ctx.locals.get(&id) {
+                    (llast::Operand::Id(ptr_uid.clone()), ty.clone())
+                } else if let Some((ptr_gid, ty)) = self.globals.get(&id) {
+                    (llast::Operand::Gid(ptr_gid.clone()), ty.clone())
+                } else {
+                    eprintln!("looking for {}", id);
+                    eprintln!("locals: {:?}", fun_ctx.locals);
+                    eprintln!("globals: {:?}", self.globals);
+                    unreachable!()
+                }
+            }
             oast::Exp::Proj(_, _) => todo!(),
             oast::Exp::Index(_, _) => todo!(),
             _ => unreachable!(),
         }
     }
 
-    fn tipe_decl(&mut self, t: oast::Tdecl) {
+    fn tipe_decl(&mut self, _t: oast::Tdecl) {
         todo!()
     }
 }

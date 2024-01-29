@@ -90,7 +90,6 @@ pub struct Cfg {
     pub blocks: Vec<(Lbl, Block)>,
 }
 
-// isn't display because we don't know the name of the function!
 #[derive(Debug)]
 pub struct Fdecl {
     pub ty: FunTy,

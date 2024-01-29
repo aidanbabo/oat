@@ -1,3 +1,5 @@
+/*category easiest */
+/*exitcode 23 */
 int program (int argc, string[] argv) {
   if(((~5 [&] 6) >= (2 [|] 0))) {
     return 23;

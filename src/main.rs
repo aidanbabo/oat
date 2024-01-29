@@ -15,7 +15,7 @@ struct Args {
     print_ll: bool,
     #[arg(long)]
     interpret_ll: bool,
-    #[arg(long, default_value_t = true)]
+    #[arg(long)]
     clang: bool,
 }
 
@@ -74,14 +74,21 @@ fn main() {
     let file = fs::OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(true)
         .open(&path)
         .unwrap();
     oat::llvm::write(file, &ll_prog).unwrap();
 
     if args.clang {
-        process::Command::new("clang")
-            .arg("runtime.c")
-            .arg(&path)
+        let mut cmd = process::Command::new("clang");
+        cmd.arg(&path);
+        if ext == "oat" {
+            cmd.arg("runtime.c");
+        } else if ext == "ll" {
+            // todo: runtime support for ll files (tests)
+        }
+        cmd
+            .arg("-Wno-override-module")
             .spawn()
             .unwrap()
             .wait()

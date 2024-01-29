@@ -1,6 +1,6 @@
 ;;category uncategorized
 ;;exitcode 0
-;;skip takes too long in interpreter
+;;interp_skip takes too long
 %vec = type [2 x i64]
 %mat = type [2 x %vec]
 
