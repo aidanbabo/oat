@@ -53,13 +53,29 @@ impl Context {
             oast::Exp::Null(t) => (tipe(t), llast::Ginit::Null),
             oast::Exp::Bool(b) => (llast::Ty::I1, llast::Ginit::Int(b as i64)),
             oast::Exp::Int(i) => (llast::Ty::I64, llast::Ginit::Int(i)),
-            oast::Exp::Str(_) => todo!(),
+            oast::Exp::Str(s) => {
+                self.global_string(v.name, s);
+                return;
+            }
             oast::Exp::Id(_) => todo!(),
             oast::Exp::ArrElems(_, _) => todo!(),
             _ => unreachable!(),
         };
         self.llprog.gdecls.push((v.name.clone(), (ty.clone(), op)));
         assert!(self.globals.insert(v.name.clone(), (v.name, ty)).is_none());
+    }
+
+    fn global_string(&mut self, name: String, mut s: String) {
+        s.push('\0');
+        let temp = self.gensym("string_temp");
+        let array_ty = llast::Ty::Array(s.len() as i64, Box::new(llast::Ty::I8));
+        self.llprog.gdecls.push((temp.clone(), (array_ty.clone(), llast::Ginit::String(s))));
+        assert!(self.globals.insert(temp.clone(), (temp.clone(), array_ty.clone())).is_none());
+
+        let string_ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));
+        let bitcast = llast::Ginit::Bitcast(llast::Ty::Ptr(Box::new(array_ty)), Box::new(llast::Ginit::Gid(temp)), string_ty.clone());
+        self.llprog.gdecls.push((name.clone(), (string_ty.clone(), bitcast)));
+        assert!(self.globals.insert(name.clone(), (name, string_ty)).is_none());
     }
 
     fn function(&mut self, func: oast::Fdecl) {
@@ -214,7 +230,15 @@ impl Context {
             oast::Exp::Null(t) => (llast::Operand::Const(0), tipe(t)),
             oast::Exp::Bool(b) => (llast::Operand::Const(b as i64), llast::Ty::I1),
             oast::Exp::Int(n) => (llast::Operand::Const(n), llast::Ty::I64),
-            oast::Exp::Str(_) => todo!(),
+            oast::Exp::Str(s) => {
+                let gid = self.gensym("string");
+                self.global_string(gid.clone(), s);
+                let ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));
+                let insn = llast::Insn::Load(ty.clone(), llast::Operand::Gid(gid));
+                let uid = self.gensym("uid");
+                fun_ctx.cfg.current().insns.push((uid.clone(), insn));
+                (llast::Operand::Id(uid), ty)
+            }
             oast::Exp::ArrElems(_, _) => todo!(),
             oast::Exp::ArrLen(_, _) => todo!(),
             oast::Exp::ArrInit(_, _, _, _) => todo!(),

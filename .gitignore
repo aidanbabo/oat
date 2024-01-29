@@ -1,2 +1,6 @@
 /target
 /Cargo.lock
+
+# oat generated files
+/output
+a.out
