@@ -27,7 +27,7 @@ pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
 }
 
 fn write_global<W: io::Write>(w: &mut W, g: &Gdecl) -> io::Result<()> {
-    writeln!(w, "var {} = {};", g.name, g.init.t)
+    writeln!(w, "global {} = {};", g.name, g.init.t)
 }
 
 fn write_fun<W: io::Write>(w: &mut W, f: &Fdecl) -> io::Result<()> {

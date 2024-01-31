@@ -163,6 +163,18 @@ def list_tests(tests: List[Test]):
     for t in tests:
         print(t.path)
 
+def ll_files():
+    files = [p for p in pathlib.Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
+    return files
+
+def hw4_files():
+    files = [p for p in pathlib.Path('tests/programs/hw4programs').glob('*.oat')]
+    return files
+
+def custom_files():
+    files = [p for p in pathlib.Path('tests/programs/custom').glob('*.oat')]
+    return files
+
 def main():
 
     if not (args.interpret_ll or args.clang):
@@ -174,14 +186,14 @@ def main():
         exit(1)
 
     if args.suite == 'all':
-        eprint('the only supported testing right now is llvm')
-        return
-    if args.suite == 'hw4':
-        hw4_files = [p for p in pathlib.Path('tests/programs/hw4programs').glob('*.oat')]
-        tests = parse_tests(hw4_files)
+        files = hw4_files() + custom_files()
+        tests = parse_tests(files)
+    elif args.suite == 'hw4':
+        files = hw4_files()
+        tests = parse_tests(files)
     elif args.suite == 'llvm':
-        ll_files = [p for p in pathlib.Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
-        tests = parse_tests(ll_files)
+        files = ll_files()
+        tests = parse_tests(files)
     else:
         t = parse_test(args.suite)
         t.passed_by_name = True

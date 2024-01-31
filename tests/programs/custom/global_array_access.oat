@@ -1,0 +1,7 @@
+/*category custom */
+/*exitcode 2 */
+global a = new int[]{1, 2, 3};
+
+int program(int argc, string[] argv) {
+	return a[1];
+}

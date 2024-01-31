@@ -48,34 +48,59 @@ impl Context {
         s
     }
 
-    fn global(&mut self, v: oast::Gdecl) {
-        let (ty, op) = match v.init.t {
+    fn make_global(&mut self, name: String, ty: llast::Ty, init: llast::Ginit) {
+        self.llprog.gdecls.push((name.clone(), (ty.clone(), init)));
+        assert!(self.globals.insert(name.clone(), (name, ty)).is_none());
+    }
+
+    fn gexp(&mut self, exp: oast::Exp, name: String) -> (llast::Ty, llast::Ginit) {
+        let (ty, op) = match exp {
             oast::Exp::Null(t) => (tipe(t), llast::Ginit::Null),
             oast::Exp::Bool(b) => (llast::Ty::I1, llast::Ginit::Int(b as i64)),
             oast::Exp::Int(i) => (llast::Ty::I64, llast::Ginit::Int(i)),
-            oast::Exp::Str(s) => {
-                self.global_string(v.name, s);
-                return;
+            oast::Exp::Str(s) => self.global_string(name, s),
+            oast::Exp::Id(id) => {
+                let (_name, ty) = self.globals.get(&id).expect("global id");
+                (ty.clone(), llast::Ginit::Gid(id))
             }
-            oast::Exp::Id(_) => todo!(),
-            oast::Exp::ArrElems(_, _) => todo!(),
+            oast::Exp::ArrElems(ty, els) => {
+                let els: Vec<_> = els.into_iter().enumerate().map(|(i, e)| self.gexp(e.t, format!("{name}{i}"))).collect();
+                let array_len = els.len() as i64;
+                let elem_ty = tipe(ty);
+
+                let array_maker = move |ty, len| llast::Ty::Struct(vec![llast::Ty::I64, llast::Ty::Array(len, Box::new(ty))]);
+                let tmp_ty = array_maker(elem_ty.clone(), array_len);
+                let new_ty = array_maker(elem_ty.clone(), 0);
+
+                let tmp_uid = self.gensym(&format!("{name}_tmp"));
+                let tmp_ginit = llast::Ginit::Struct(vec![(llast::Ty::I64, llast::Ginit::Int(array_len)), (llast::Ty::Array(array_len, Box::new(elem_ty)), llast::Ginit::Array(els))]);
+                self.make_global(tmp_uid.clone(), tmp_ty.clone(), tmp_ginit);
+
+                let ptr_maker = move |ty| llast::Ty::Ptr(Box::new(ty));
+
+                (ptr_maker(new_ty.clone()), llast::Ginit::Bitcast(ptr_maker(tmp_ty), Box::new(llast::Ginit::Gid(tmp_uid)), ptr_maker(new_ty)))
+            }
             _ => unreachable!(),
         };
+        (ty, op)
+    }
+
+    fn global(&mut self, v: oast::Gdecl) {
+        let (ty, op) = self.gexp(v.init.t, v.name.clone());
         self.llprog.gdecls.push((v.name.clone(), (ty.clone(), op)));
         assert!(self.globals.insert(v.name.clone(), (v.name, ty)).is_none());
     }
 
-    fn global_string(&mut self, name: String, mut s: String) {
+    fn global_string(&mut self, name: String, mut s: String) -> (llast::Ty, llast::Ginit) {
         s.push('\0');
-        let temp = self.gensym("string_temp");
+        let temp = self.gensym(&format!("{name}_tmp"));
         let array_ty = llast::Ty::Array(s.len() as i64, Box::new(llast::Ty::I8));
         self.llprog.gdecls.push((temp.clone(), (array_ty.clone(), llast::Ginit::String(s))));
         assert!(self.globals.insert(temp.clone(), (temp.clone(), array_ty.clone())).is_none());
 
         let string_ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));
         let bitcast = llast::Ginit::Bitcast(llast::Ty::Ptr(Box::new(array_ty)), Box::new(llast::Ginit::Gid(temp)), string_ty.clone());
-        self.llprog.gdecls.push((name.clone(), (string_ty.clone(), bitcast)));
-        assert!(self.globals.insert(name.clone(), (name, string_ty)).is_none());
+        (string_ty, bitcast)
     }
 
     fn function(&mut self, func: oast::Fdecl) {
@@ -232,7 +257,10 @@ impl Context {
             oast::Exp::Int(n) => (llast::Operand::Const(n), llast::Ty::I64),
             oast::Exp::Str(s) => {
                 let gid = self.gensym("string");
-                self.global_string(gid.clone(), s);
+                let (ty, ginit) = self.global_string(gid.clone(), s);
+                self.llprog.gdecls.push((gid.clone(), (ty.clone(), ginit)));
+                assert!(self.globals.insert(gid.clone(), (gid.clone(), ty)).is_none());
+
                 let ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));
                 let insn = llast::Insn::Load(ty.clone(), llast::Operand::Gid(gid));
                 let uid = self.gensym("uid");
@@ -350,7 +378,22 @@ impl Context {
                 }
             }
             oast::Exp::Proj(_, _) => todo!(),
-            oast::Exp::Index(_, _) => todo!(),
+            oast::Exp::Index(arr, ix) => {
+                // todo: bounds check
+                let (aop, aty) = self.exp(fun_ctx, arr.t);
+                let (iop, _) = self.exp(fun_ctx, ix.t);
+
+                let llast::Ty::Ptr(p) = &aty else { unreachable!() };
+                let ptr_ty = p.clone();
+                let llast::Ty::Struct(v) = &**p else { unreachable!() };
+                let llast::Ty::Array(_, elem_ty) = &v[1] else { unreachable!() };
+                let elem_ty: llast::Ty = *elem_ty.clone();
+
+                let gep_uid = self.gensym("index");
+                let gep = llast::Insn::Gep(*ptr_ty, aop, vec![llast::Operand::Const(0), llast::Operand::Const(1), iop]);
+                fun_ctx.cfg.current().insns.push((gep_uid.clone(), gep));
+                (llast::Operand::Id(gep_uid), elem_ty)
+            }
             _ => unreachable!(),
         }
     }
