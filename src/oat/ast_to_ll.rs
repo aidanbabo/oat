@@ -17,7 +17,7 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Self {
-        Context {
+        let mut ctx = Context {
             llprog: llast::Prog {
                 tdecls: Default::default(),
                 gdecls: Default::default(),
@@ -26,7 +26,12 @@ impl Context {
             },
             globals: Default::default(),
             sym_num: 0,
-        }
+        };
+
+        ctx.llprog.edecls.push(("oat_assert_array_length".to_string(), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
+        ctx.llprog.edecls.push(("oat_alloc_array".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
+        
+        ctx
     }
 
     // todo: order independent top level ?
@@ -68,15 +73,12 @@ impl Context {
                 let array_len = els.len() as i64;
                 let elem_ty = tipe(ty);
 
-                let array_maker = move |ty, len| llast::Ty::Struct(vec![llast::Ty::I64, llast::Ty::Array(len, Box::new(ty))]);
                 let tmp_ty = array_maker(elem_ty.clone(), array_len);
                 let new_ty = array_maker(elem_ty.clone(), 0);
 
                 let tmp_uid = self.gensym(&format!("{name}_tmp"));
                 let tmp_ginit = llast::Ginit::Struct(vec![(llast::Ty::I64, llast::Ginit::Int(array_len)), (llast::Ty::Array(array_len, Box::new(elem_ty)), llast::Ginit::Array(els))]);
                 self.make_global(tmp_uid.clone(), tmp_ty.clone(), tmp_ginit);
-
-                let ptr_maker = move |ty| llast::Ty::Ptr(Box::new(ty));
 
                 (ptr_maker(new_ty.clone()), llast::Ginit::Bitcast(ptr_maker(tmp_ty), Box::new(llast::Ginit::Gid(tmp_uid)), ptr_maker(new_ty)))
             }
@@ -267,8 +269,24 @@ impl Context {
                 fun_ctx.cfg.current().insns.push((uid.clone(), insn));
                 (llast::Operand::Id(uid), ty)
             }
-            oast::Exp::ArrElems(_, _) => todo!(),
-            oast::Exp::ArrLen(_, _) => todo!(),
+            oast::Exp::ArrElems(ty, els) => {
+                let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, tipe(ty), llast::Operand::Const(els.len() as i64));
+
+                for (ix, el) in els.into_iter().enumerate() {
+                    let (op, ty) = self.exp(fun_ctx, el.t);
+                    let ix_ptr_uid = self.gensym("ix");
+                    let ix_ptr_insn = llast::Insn::Gep(array_base_ty.clone(), array_op.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(1), llast::Operand::Const(ix as i64)]);
+                    fun_ctx.cfg.current().insns.push((ix_ptr_uid.clone(), ix_ptr_insn));
+                    fun_ctx.cfg.current().insns.push((self.gensym("_"), llast::Insn::Store(ty, op, llast::Operand::Id(ix_ptr_uid))));
+                }
+
+                (array_op, array_ty)
+            }
+            oast::Exp::ArrLen(ty, len) => {
+                let (op, _) = self.exp(fun_ctx, len.t);
+                let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, tipe(ty), op);
+                (array_op, array_ty)
+            }
             oast::Exp::ArrInit(_, _, _, _) => todo!(),
             oast::Exp::Length(_) => todo!(),
             oast::Exp::Struct(_, _) => todo!(),
@@ -349,6 +367,16 @@ impl Context {
         (op, ty)
     }
 
+    fn oat_alloc_array(&mut self, fun_ctx: &mut FunContext, ty: llast::Ty, len: llast::Operand) -> (llast::Operand, llast::Ty, llast::Ty) {
+        let (i64_ptr_op, i64_ptr_ty) = self.call_builtin(fun_ctx, "oat_alloc_array", &[len]);
+        let array_uid = self.gensym("array");
+        let array_base_ty = array_maker(ty, 0);
+        let array_ty = ptr_maker(array_base_ty.clone());
+        fun_ctx.cfg.current().insns.push((array_uid.clone(), llast::Insn::Bitcast(i64_ptr_ty, i64_ptr_op.clone(), array_ty.clone())));
+
+        (llast::Operand::Id(array_uid), array_ty, array_base_ty)
+    }
+
     fn call(&mut self, fun_ctx: &mut FunContext, f: oast::Exp, args: Vec<Node<oast::Exp>>, uid: llast::Uid) -> (llast::Operand, llast::Ty) {
         let (fop, tf) = self.exp(fun_ctx, f);
         let llast::Ty::Ptr(p) = tf else { unreachable!() };
@@ -379,7 +407,6 @@ impl Context {
             }
             oast::Exp::Proj(_, _) => todo!(),
             oast::Exp::Index(arr, ix) => {
-                // todo: bounds check
                 let (aop, aty) = self.exp(fun_ctx, arr.t);
                 let (iop, _) = self.exp(fun_ctx, ix.t);
 
@@ -388,6 +415,11 @@ impl Context {
                 let llast::Ty::Struct(v) = &**p else { unreachable!() };
                 let llast::Ty::Array(_, elem_ty) = &v[1] else { unreachable!() };
                 let elem_ty: llast::Ty = *elem_ty.clone();
+
+                let len_ptr = self.gensym("len");
+                let len_ptr_insn = llast::Insn::Gep(*ptr_ty.clone(), aop.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(0)]);
+                fun_ctx.cfg.current().insns.push((len_ptr.clone(), len_ptr_insn));
+                self.call_builtin(fun_ctx, "oat_assert_array_length", &[llast::Operand::Id(len_ptr), iop.clone()]);
 
                 let gep_uid = self.gensym("index");
                 let gep = llast::Insn::Gep(*ptr_ty, aop, vec![llast::Operand::Const(0), llast::Operand::Const(1), iop]);
@@ -398,9 +430,28 @@ impl Context {
         }
     }
 
+    fn call_builtin(&mut self, fun_ctx: &mut FunContext, name: &'static str, args: &[llast::Operand]) -> (llast::Operand, llast::Ty) {
+        let ret = self.gensym("ret");
+        let (_, ty) = self.llprog.edecls.iter().find(|(n, _)| n == name).expect("unknown builtin");
+        let llast::Ty::Fun(arg_tys, ret_ty) = ty else { unreachable!() };
+        let args: Vec<_> = args.iter().zip(arg_tys).map(|(a, t)| (t.clone(), a.clone())).collect();
+        let ret_ty = (**ret_ty).clone();
+        let insn = llast::Insn::Call(ret_ty.clone(), llast::Operand::Gid(name.to_string()), args.to_vec());
+        fun_ctx.cfg.current().insns.push((ret.clone(), insn));
+        (llast::Operand::Id(ret), ret_ty)
+    }
+
     fn tipe_decl(&mut self, _t: oast::Tdecl) {
         todo!()
     }
+}
+
+fn array_maker(ty: llast::Ty, len: i64) -> llast::Ty {
+    llast::Ty::Struct(vec![llast::Ty::I64, llast::Ty::Array(len, Box::new(ty))])
+}
+
+fn ptr_maker(ty: llast::Ty) -> llast::Ty {
+    llast::Ty::Ptr(Box::new(ty))
 }
 
 fn tipe(ot: oast::Ty) -> llast::Ty {

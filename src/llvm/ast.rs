@@ -28,7 +28,7 @@ pub struct FunTy {
     pub ret: Ty,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Operand {
     Null,
     Const(i64),

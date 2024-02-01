@@ -1,6 +1,5 @@
 /*category globals */
 /*exitcode 3 */
-/*skip no array support */
 global arr = new int[] {};
 
 int program (int argc, string[] argv) {

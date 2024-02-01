@@ -1,6 +1,5 @@
 /*category easiest */
 /*exitcode 236 */
-/*skip no array support */
 int program (int argc, string[] argv) {
   var x = new int[]{1,2,3,4};
   var ans = 0;
