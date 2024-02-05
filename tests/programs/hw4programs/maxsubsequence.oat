@@ -1,3 +1,5 @@
+/*category student */
+/*exitcode 107 */
 int maxsum(int[] arr, int size) {
     var maxarr = new int[size];
     var maxs = 0;

@@ -187,10 +187,6 @@ def custom_files():
 
 def main():
 
-    if not (args.interpret_ll or args.clang):
-        eprint('must run through test through interpreter or use clang backend')
-        exit(1)
-
     cargo_build = subprocess.run(['cargo', 'build', '--release'])
     if cargo_build.returncode != 0:
         exit(1)
@@ -216,11 +212,15 @@ def main():
     if args.list:
         list_tests(tests)
     else:
+        if not (args.interpret_ll or args.clang):
+            eprint('must run through test through interpreter or use clang backend')
+            exit(1)
+
         run_tests(tests)
 
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
-    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard']
+    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', choices=['all', 'llvm', 'hw4'],  nargs='?')

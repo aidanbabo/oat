@@ -1,3 +1,5 @@
+/*category student */
+/*exitcode 3 */
 int binary_gcd (int x, int y) {
   if (x == y) { return x; }
   if (x == 0) { return y; }

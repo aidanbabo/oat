@@ -1,3 +1,5 @@
+/*category student */
+/*exitcode 0 */
 global arr1 = new int[]{1,2,3,4};
 global arr2 = new int[]{1,2,3,5};
 

@@ -1,3 +1,6 @@
+/*category student */
+/*exitcode 0 */
+/*prints TFTF FFTT */
 global lfsr_iterations  = 5;
 global lfsr_length      = 4;
 global lfsr_init_values = new bool[]{true, false, true, false};

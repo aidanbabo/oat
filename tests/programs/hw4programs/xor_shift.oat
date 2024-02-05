@@ -1,3 +1,6 @@
+/*category student */
+/*exitcode 0 */
+/*prints "838867572\n2281719060" */
 int xor (int x, int y) {
 	return ~(x [&] y) [&] (x [|] y);
 }

@@ -85,7 +85,9 @@ impl Context {
         ctx.add_builtin("print_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Void)));
         ctx.add_builtin("array_of_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(int_array_type.clone())));
         ctx.add_builtin("string_of_array", llast::Ty::Fun(vec![int_array_type], Box::new(string_type.clone())));
-        ctx.add_builtin("string_of_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(string_type)));
+        ctx.add_builtin("string_of_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(string_type.clone())));
+        ctx.add_builtin("length_of_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(llast::Ty::I64)));
+        ctx.add_builtin("string_cat", llast::Ty::Fun(vec![string_type.clone(), string_type.clone()], Box::new(string_type)));
         
         ctx
     }

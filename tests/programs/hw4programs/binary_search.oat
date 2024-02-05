@@ -1,3 +1,6 @@
+/*category student */
+/*exitcode 0 */
+/*prints Correct! */
 int euclid_division (int numerator, int denominator) {
 	if (denominator < 0)
 	{

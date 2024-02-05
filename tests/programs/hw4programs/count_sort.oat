@@ -1,3 +1,6 @@
+/*category student */
+/*exitcode 0 */
+/*prints "AFHZAAEYC\nAAACEFHYZ" */
 
 int min(int[] arr, int len) {
   var min = arr[0];

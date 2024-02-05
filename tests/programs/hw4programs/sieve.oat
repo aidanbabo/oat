@@ -1,3 +1,5 @@
+/*category student */
+/*exitcode 25 */
 int sieve(int n) {
   var arr = new bool[n];
   for (var i=0; i < n; i=i+1;) { arr[i] = true; }

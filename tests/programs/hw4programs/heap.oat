@@ -1,3 +1,5 @@
+/*category student */
+/*exitcode 1 */
 void min_heapify(int[] array, int i, int len) {
   var l = i * 2;
   var r = i + 1;

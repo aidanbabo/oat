@@ -1,3 +1,5 @@
+/*category student */
+/*exitcode 16 */
 int gcd(int a, int b) {
   while (b != 0) {
     var t = b;
