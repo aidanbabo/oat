@@ -6,9 +6,9 @@ mod lexer;
 mod parser;
 mod ast_to_ll;
 mod print;
+mod typecheck;
 
 use crate::llvm;
-
 
 /// Row-column pairs
 #[derive(Copy, Clone, Debug)]
@@ -69,6 +69,10 @@ pub fn parse(input: &str) -> Result<ast::Prog, Box<dyn std::error::Error>> {
     let tokens = l.lex_all();
     let prog = parser::Parser::new(tokens).parse_program()?;
     Ok(prog)
+}
+
+pub fn typecheck(prog: &ast::Prog) -> Result<(), typecheck::TypeError> {
+    typecheck::check(prog)
 }
 
 pub fn to_llvm(oprog: ast::Prog) -> llvm::ast::Prog {

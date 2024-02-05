@@ -40,6 +40,11 @@ fn main() {
             oat::oat::print(&prog);
         }
 
+        if let Err(e) = oat::oat::typecheck(&prog) {
+            eprintln!("{e:?}");
+            return;
+        }
+
         oat::oat::to_llvm(prog)
     } else if ext == "ll" {
         let s = fs::read_to_string(&args.path).unwrap();
