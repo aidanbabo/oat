@@ -4,7 +4,7 @@ use super::{ast as oast, Node};
 use crate::llvm::ast as llast;
 
 struct FunContext {
-    locals: HashMap<oast::Ident, (llast::Uid, llast::Ty)>,
+    locals: Vec<HashMap<oast::Ident, (llast::Uid, llast::Ty)>>,
     cfg: llast::Cfg,
     current: (Option<llast::Uid>, Vec<(llast::Uid, llast::Insn)>, Option<(llast::Uid, llast::Terminator)>),
     ret_ty: llast::Ty,
@@ -33,6 +33,27 @@ impl FunContext {
         };
 
         self.cfg.blocks.push((name.expect("block given name"), block));
+    }
+
+    pub fn push_scope(&mut self) {
+        self.locals.push(Default::default());
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.locals.pop();
+    }
+
+    pub fn add_local(&mut self, key: oast::Ident, val: (llast::Uid, llast::Ty)) {
+        self.locals.last_mut().unwrap().insert(key, val);
+    }
+
+    pub fn lookup_local(&self, name: &oast::Ident) -> Option<&(String, llast::Ty)> {
+        for scope in self.locals.iter().rev() {
+            if let Some(val) = scope.get(name) {
+                return Some(val);
+            }
+        }
+        None
     }
 }
 
@@ -158,16 +179,24 @@ impl Context {
             current: Default::default(),
         };
 
+        fun_ctx.push_scope();
+
         for (n, ty) in names.iter().zip(fun_ty.params.iter()) {
             let uid = self.gensym(n);
             fun_ctx.cfg.entry.insns.push((uid.clone(), llast::Insn::Alloca(ty.clone())));
-            fun_ctx.locals.insert(n.clone(), (uid.clone(), ty.clone()));
+            fun_ctx.add_local(n.clone(), (uid.clone(), ty.clone()));
             fun_ctx.cfg.entry.insns.push((self.gensym("_"), llast::Insn::Store(ty.clone(), llast::Operand::Id(n.clone()), llast::Operand::Id(uid.clone()))));
         }
 
         fun_ctx.start_block(post_entry_lbl);
 
         self.block(&mut fun_ctx, func.body);
+        fun_ctx.pop_scope();
+        assert_eq!(fun_ctx.locals.len(), 0);
+
+        // todo: temp fix
+        fun_ctx.cfg.blocks.retain(|(lbl, _)| !lbl.starts_with("__unreachable"));
+
         /*
         crappy codegen prevents me from doing this
         assert_eq!(fun_ctx.current.0, None);
@@ -206,7 +235,7 @@ impl Context {
                 let ret_op = v.map(|v| self.exp(fun_ctx, v.t).0);
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Ret(fun_ctx.ret_ty.clone(), ret_op));
                 // todo: bad codegen :(
-                fun_ctx.start_block(self.gensym("__unreachable"));
+                fun_ctx.start_block(self.gensym("_unreachable"));
             },
             oast::Stmt::Call(f, args) => {
                 let uid = self.gensym("_");
@@ -219,13 +248,17 @@ impl Context {
                 let after_lbl = self.gensym("after");
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(cnd_op, then_lbl.clone(), else_lbl.clone()));
 
+                fun_ctx.push_scope();
                 fun_ctx.start_block(then_lbl.clone());
                 self.block(fun_ctx, if_blk);
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                fun_ctx.pop_scope();
 
+                fun_ctx.push_scope();
                 fun_ctx.start_block(else_lbl.clone());
                 self.block(fun_ctx, else_blk);
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                fun_ctx.pop_scope();
 
                 fun_ctx.start_block(after_lbl.clone());
             }
@@ -236,6 +269,8 @@ impl Context {
                 let for_body_lbl = self.gensym("for_body");
                 let for_update_lbl = self.gensym("for_update");
                 let for_after_lbl = self.gensym("after_for");
+
+                fun_ctx.push_scope();
                 for vd in vdecls {
                     self.vdecl(fun_ctx, vd);
                 }
@@ -259,6 +294,7 @@ impl Context {
                     self.stmt(fun_ctx, upd.t);
                 }
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
+                fun_ctx.pop_scope();
 
                 fun_ctx.start_block(for_after_lbl.clone());
             }
@@ -272,9 +308,11 @@ impl Context {
                 let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(cnd_op, while_body_lbl.clone(), while_after_lbl.clone()));
 
+                fun_ctx.push_scope();
                 fun_ctx.start_block(while_body_lbl.clone());
                 self.block(fun_ctx, blk);
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(while_top_lbl.clone()));
+                fun_ctx.pop_scope();
 
                 fun_ctx.start_block(while_after_lbl.clone());
             }
@@ -286,7 +324,7 @@ impl Context {
         let alloca = llast::Insn::Alloca(ty.clone());
         let alloca_uid = self.gensym(&d.name);
         fun_ctx.cfg.entry.insns.push((alloca_uid.clone(), alloca));
-        assert!(fun_ctx.locals.insert(d.name.clone(), (alloca_uid.clone(), ty.clone())).is_none(), "shadowed variable");
+        fun_ctx.add_local(d.name.clone(), (alloca_uid.clone(), ty.clone()));
         fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), exp_uid, llast::Operand::Id(alloca_uid)));
     }
 
@@ -432,7 +470,7 @@ impl Context {
         match lhs {
             oast::Exp::Id(id) => {
                 // todo: support multiple scopes
-                if let Some((ptr_uid, ty)) = fun_ctx.locals.get(&id) {
+                if let Some((ptr_uid, ty)) = fun_ctx.lookup_local(&id) {
                     (llast::Operand::Id(ptr_uid.clone()), ty.clone())
                 } else if let Some((ptr_gid, ty)) = self.globals.get(&id) {
                     (llast::Operand::Gid(ptr_gid.clone()), ty.clone())
