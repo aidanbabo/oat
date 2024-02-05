@@ -1,3 +1,6 @@
+/*category hard */
+/*exitcode 255 */
+/*prints y}xotnuw notuwxy} */
 void bubble_sort(int[] numbers, int array_size)
 {
   var temp=0; 

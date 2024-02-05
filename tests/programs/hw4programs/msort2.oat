@@ -1,3 +1,7 @@
+/*category hard */
+/*exitcode 0 */
+/*prints "~}|{zyxwvu uvwxyz{|}~ " */
+/*todo dedup with msort.oat */
 int program (int argc, string[] argv) {
   var a = new int[]{126,125,124,123,122,121,120,119,118,117};
   var i = 0;

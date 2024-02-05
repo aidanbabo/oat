@@ -1,6 +1,6 @@
 /*category medium */
 /*exitcode 0 */
-/*prints 1200 */
+/*prints 120 */
 int fact(int x) {
   var acc = 1;
   while (x > 0) {

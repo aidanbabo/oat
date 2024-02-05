@@ -1,3 +1,6 @@
+/*category hard */
+/*exitcode 0 */
+/*prints 0125306599200 */
 int getminindex(int[] a, int s, int b)
 {
   var i=s;

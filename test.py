@@ -63,8 +63,12 @@ def parse_test(filepath: str) -> Test:
         elif opt == 'todo':
             test.todo = rest
         elif opt == 'prints':
-            newline = '\n' if comment_str == ';;' else ''
-            test.prints = (rest +newline).encode('utf8')
+            if rest.startswith('"'):
+                # i hope nobody sees this!
+                test.prints = eval(rest).encode('utf8')
+            else:
+                newline = '\n' if comment_str == ';;' else ''
+                test.prints = (rest + newline).encode('utf8')
         elif opt == 'args':
             test.args = rest.split()
         elif args.debug:
@@ -216,7 +220,7 @@ def main():
 
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
-    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium']
+    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', choices=['all', 'llvm', 'hw4'],  nargs='?')

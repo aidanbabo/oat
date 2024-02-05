@@ -1,3 +1,5 @@
+/*category hard */
+/*exitcode 120 */
 int f(int i) {
   var r = 0;
   if (i == 0) {
