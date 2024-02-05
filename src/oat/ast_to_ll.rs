@@ -6,7 +6,34 @@ use crate::llvm::ast as llast;
 struct FunContext {
     locals: HashMap<oast::Ident, (llast::Uid, llast::Ty)>,
     cfg: llast::Cfg,
+    current: (Option<llast::Uid>, Vec<(llast::Uid, llast::Insn)>, Option<(llast::Uid, llast::Terminator)>),
     ret_ty: llast::Ty,
+}
+
+impl FunContext {
+    pub fn start_block(&mut self, name: llast::Uid) {
+        self.current.0 = Some(name);
+    }
+
+    pub fn push_insn(&mut self, uid: llast::Uid, insn: llast::Insn) {
+        if self.current.0.is_none() {
+            panic!("inserting into block with no name")
+        }
+        self.current.1.push((uid, insn));
+    }
+
+    pub fn terminate(&mut self, uid: llast::Uid, term: llast::Terminator) {
+        if let Some(term) = self.current.2.replace((uid, term)) {
+            panic!("block already terminated with {term:?}");
+        }
+        let (name, insns, term) = std::mem::take(&mut self.current);
+        let block = llast::Block {
+            insns,
+            term: term.unwrap(),
+        };
+
+        self.cfg.blocks.push((name.expect("block given name"), block));
+    }
 }
 
 pub struct Context {
@@ -116,13 +143,19 @@ impl Context {
         let ty_fun = llast::Ty::Fun(fun_ty.params.clone(), Box::new(fun_ty.ret.clone()));
         assert!(self.globals.insert(func.name.clone(), (func.name.clone(), ty_fun)).is_none());
 
+        let post_entry_lbl = "post_entry".to_string();
+
         let mut fun_ctx = FunContext {
             cfg: llast::Cfg {
-                entry: empty_block(&fun_ty.ret.clone()),
+                entry: llast::Block {
+                    insns: Default::default(),
+                    term: (self.gensym("_"), llast::Terminator::Br(post_entry_lbl.clone())),
+                },
                 blocks: vec![],
             },
             locals: Default::default(),
             ret_ty: fun_ty.ret.clone(),
+            current: Default::default(),
         };
 
         for (n, ty) in names.iter().zip(fun_ty.params.iter()) {
@@ -132,10 +165,15 @@ impl Context {
             fun_ctx.cfg.entry.insns.push((self.gensym("_"), llast::Insn::Store(ty.clone(), llast::Operand::Id(n.clone()), llast::Operand::Id(uid.clone()))));
         }
 
-        self.block(&mut fun_ctx, func.body);
+        fun_ctx.start_block(post_entry_lbl);
 
-        // todo: temp fix, doesn't even fully work
-        fun_ctx.cfg.blocks.retain(|(lbl, _)| !lbl.starts_with("__unreachable"));
+        self.block(&mut fun_ctx, func.body);
+        /*
+        crappy codegen prevents me from doing this
+        assert_eq!(fun_ctx.current.0, None);
+        assert_eq!(fun_ctx.current.1, vec![]);
+        assert_eq!(fun_ctx.current.2, None);
+        */
 
         let fdecl = llast::Fdecl {
             ty: fun_ty,
@@ -159,16 +197,16 @@ impl Context {
                 let (rhs_op, ty) = self.exp(fun_ctx, rhs.t);
                 let (lhs_ptr_op, pointee_ty) = self.lhs(fun_ctx, lhs.t);
                 debug_assert_eq!(ty, pointee_ty);
-                fun_ctx.cfg.current().insns.push((self.gensym("_"), llast::Insn::Store(ty.clone(), rhs_op, lhs_ptr_op)));
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), rhs_op, lhs_ptr_op));
             },
             oast::Stmt::Decl(d) => {
                 self.vdecl(fun_ctx, d);
             },
             oast::Stmt::Ret(v) => {
                 let ret_op = v.map(|v| self.exp(fun_ctx, v.t).0);
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Ret(fun_ctx.ret_ty.clone(), ret_op));
-                // todo: crappy codegen :/
-                fun_ctx.cfg.blocks.push((self.gensym("_unreachable"), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Ret(fun_ctx.ret_ty.clone(), ret_op));
+                // todo: bad codegen :(
+                fun_ctx.start_block(self.gensym("__unreachable"));
             },
             oast::Stmt::Call(f, args) => {
                 let uid = self.gensym("_");
@@ -179,17 +217,17 @@ impl Context {
                 let then_lbl = self.gensym("then");
                 let else_lbl = self.gensym("else");
                 let after_lbl = self.gensym("after");
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Cbr(cnd_op, then_lbl.clone(), else_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(cnd_op, then_lbl.clone(), else_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((then_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(then_lbl.clone());
                 self.block(fun_ctx, if_blk);
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((else_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(else_lbl.clone());
                 self.block(fun_ctx, else_blk);
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((after_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(after_lbl.clone());
             }
             oast::Stmt::IfNull(_, _, _, _, _) => todo!(),
             oast::Stmt::For(vdecls, cnd, update, blk) => {
@@ -201,44 +239,44 @@ impl Context {
                 for vd in vdecls {
                     self.vdecl(fun_ctx, vd);
                 }
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((for_top_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(for_top_lbl.clone());
                 let cnd_op = if let Some(cnd) = cnd {
                     let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
                     cnd_op
                 } else {
                     llast::Operand::Const(1)
                 };
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Cbr(cnd_op, for_body_lbl.clone(), for_after_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(cnd_op, for_body_lbl.clone(), for_after_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((for_body_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(for_body_lbl.clone());
                 self.block(fun_ctx, blk);
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(for_update_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_update_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((for_update_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(for_update_lbl.clone());
                 if let Some(upd) = update {
                     self.stmt(fun_ctx, upd.t);
                 }
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((for_after_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(for_after_lbl.clone());
             }
             oast::Stmt::While(cnd, blk) => {
                 let while_top_lbl = self.gensym("while_top");
                 let while_body_lbl = self.gensym("while_body");
                 let while_after_lbl = self.gensym("while_after");
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(while_top_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(while_top_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((while_top_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(while_top_lbl.clone());
                 let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Cbr(cnd_op, while_body_lbl.clone(), while_after_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(cnd_op, while_body_lbl.clone(), while_after_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((while_body_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(while_body_lbl.clone());
                 self.block(fun_ctx, blk);
-                fun_ctx.cfg.current().term = (self.gensym("_"), llast::Terminator::Br(while_top_lbl.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(while_top_lbl.clone()));
 
-                fun_ctx.cfg.blocks.push((while_after_lbl.clone(), empty_block(&fun_ctx.ret_ty)));
+                fun_ctx.start_block(while_after_lbl.clone());
             }
         }
     }
@@ -249,7 +287,7 @@ impl Context {
         let alloca_uid = self.gensym(&d.name);
         fun_ctx.cfg.entry.insns.push((alloca_uid.clone(), alloca));
         assert!(fun_ctx.locals.insert(d.name.clone(), (alloca_uid.clone(), ty.clone())).is_none(), "shadowed variable");
-        fun_ctx.cfg.current().insns.push((self.gensym("_"), llast::Insn::Store(ty.clone(), exp_uid, llast::Operand::Id(alloca_uid))));
+        fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), exp_uid, llast::Operand::Id(alloca_uid)));
     }
 
     fn exp(&mut self, fun_ctx: &mut FunContext, exp: oast::Exp) -> (llast::Operand, llast::Ty) {
@@ -266,7 +304,7 @@ impl Context {
                 let ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));
                 let insn = llast::Insn::Load(ty.clone(), llast::Operand::Gid(gid));
                 let uid = self.gensym("uid");
-                fun_ctx.cfg.current().insns.push((uid.clone(), insn));
+                fun_ctx.push_insn(uid.clone(), insn);
                 (llast::Operand::Id(uid), ty)
             }
             oast::Exp::ArrElems(ty, els) => {
@@ -276,8 +314,8 @@ impl Context {
                     let (op, ty) = self.exp(fun_ctx, el.t);
                     let ix_ptr_uid = self.gensym("ix");
                     let ix_ptr_insn = llast::Insn::Gep(array_base_ty.clone(), array_op.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(1), llast::Operand::Const(ix as i64)]);
-                    fun_ctx.cfg.current().insns.push((ix_ptr_uid.clone(), ix_ptr_insn));
-                    fun_ctx.cfg.current().insns.push((self.gensym("_"), llast::Insn::Store(ty, op, llast::Operand::Id(ix_ptr_uid))));
+                    fun_ctx.push_insn(ix_ptr_uid.clone(), ix_ptr_insn);
+                    fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty, op, llast::Operand::Id(ix_ptr_uid)));
                 }
 
                 (array_op, array_ty)
@@ -315,7 +353,7 @@ impl Context {
                     oast::Binop::Eq | oast::Binop::Neq => {
                         let op2 = if t1 != t2 {
                             let e2_uid = self.gensym("eq_cast");
-                            fun_ctx.cfg.current().insns.push((e2_uid.clone(), llast::Insn::Bitcast(t2, op2, t1.clone())));
+                            fun_ctx.push_insn(e2_uid.clone(), llast::Insn::Bitcast(t2, op2, t1.clone()));
                             llast::Operand::Id(e2_uid)
                         } else {
                             op2
@@ -331,7 +369,7 @@ impl Context {
                     }
                 };
                 let uid = self.gensym("bop");
-                fun_ctx.cfg.current().insns.push((uid.clone(), insn));
+                fun_ctx.push_insn(uid.clone(), insn);
                 (llast::Operand::Id(uid), t3)
             },
             oast::Exp::Uop(ouop, exp) => {
@@ -342,7 +380,7 @@ impl Context {
                     oast::Unop::BitNot => (llast::Ty::I64, llast::Insn::Binop(llast::Bop::Xor, llast::Ty::I64, llast::Operand::Const(-1), e1)),
                 };
                 let uid = self.gensym("uop");
-                fun_ctx.cfg.current().insns.push((uid.clone(), insn));
+                fun_ctx.push_insn(uid.clone(), insn);
                 (llast::Operand::Id(uid), t2)
             }
             e@(oast::Exp::Id(..) | oast::Exp::Proj(..) | oast::Exp::Index(..)) => {
@@ -358,7 +396,7 @@ impl Context {
                 } else {
                     let load_uid = self.gensym(&name);
                     let load_insn = llast::Insn::Load(pointee_ty.clone(), ptr_operand);
-                    fun_ctx.cfg.current().insns.push((load_uid.clone(), load_insn));
+                    fun_ctx.push_insn(load_uid.clone(), load_insn);
                     (llast::Operand::Id(load_uid), pointee_ty.clone())
                 }
             }
@@ -372,7 +410,7 @@ impl Context {
         let array_uid = self.gensym("array");
         let array_base_ty = array_maker(ty, 0);
         let array_ty = ptr_maker(array_base_ty.clone());
-        fun_ctx.cfg.current().insns.push((array_uid.clone(), llast::Insn::Bitcast(i64_ptr_ty, i64_ptr_op.clone(), array_ty.clone())));
+        fun_ctx.push_insn(array_uid.clone(), llast::Insn::Bitcast(i64_ptr_ty, i64_ptr_op.clone(), array_ty.clone()));
 
         (llast::Operand::Id(array_uid), array_ty, array_base_ty)
     }
@@ -385,7 +423,7 @@ impl Context {
             let (op, t) = self.exp(fun_ctx, a.t);
             (t, op)
         }).collect();
-        fun_ctx.cfg.current().insns.push((uid.clone(), llast::Insn::Call((*ret_ty).clone(), fop, args)));
+        fun_ctx.push_insn(uid.clone(), llast::Insn::Call((*ret_ty).clone(), fop, args));
         (llast::Operand::Id(uid), *ret_ty)
     }
 
@@ -418,12 +456,12 @@ impl Context {
 
                 let len_ptr = self.gensym("len");
                 let len_ptr_insn = llast::Insn::Gep(*ptr_ty.clone(), aop.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(0)]);
-                fun_ctx.cfg.current().insns.push((len_ptr.clone(), len_ptr_insn));
+                fun_ctx.push_insn(len_ptr.clone(), len_ptr_insn);
                 self.call_builtin(fun_ctx, "oat_assert_array_length", &[llast::Operand::Id(len_ptr), iop.clone()]);
 
                 let gep_uid = self.gensym("index");
                 let gep = llast::Insn::Gep(*ptr_ty, aop, vec![llast::Operand::Const(0), llast::Operand::Const(1), iop]);
-                fun_ctx.cfg.current().insns.push((gep_uid.clone(), gep));
+                fun_ctx.push_insn(gep_uid.clone(), gep);
                 (llast::Operand::Id(gep_uid), elem_ty)
             }
             _ => unreachable!(),
@@ -437,7 +475,7 @@ impl Context {
         let args: Vec<_> = args.iter().zip(arg_tys).map(|(a, t)| (t.clone(), a.clone())).collect();
         let ret_ty = (**ret_ty).clone();
         let insn = llast::Insn::Call(ret_ty.clone(), llast::Operand::Gid(name.to_string()), args.to_vec());
-        fun_ctx.cfg.current().insns.push((ret.clone(), insn));
+        fun_ctx.push_insn(ret.clone(), insn);
         (llast::Operand::Id(ret), ret_ty)
     }
 
@@ -465,27 +503,5 @@ fn tipe(ot: oast::Ty) -> llast::Ty {
         TK::Struct(_) => todo!(),
         TK::Array(t) => Lty::Ptr(Box::new(Lty::Struct(vec![Lty::I64, Lty::Array(0, Box::new(tipe(*t)))]))),
         TK::Fun(_, _) => todo!(),
-    }
-}
-
-fn empty_block(ret_ty: &llast::Ty) -> llast::Block {
-    let ret_val = if let llast::Ty::Void = ret_ty {
-        None
-    } else {
-        Some(llast::Operand::Const(0))
-    };
-    llast::Block {
-        insns: vec![],
-        term: ("__garbage__".to_string(), llast::Terminator::Ret(ret_ty.clone(), ret_val)),
-    }
-}
-
-impl llast::Cfg {
-    pub fn current(&mut self) -> &mut llast::Block {
-        if let Some(last) = self.blocks.last_mut() {
-            &mut last.1
-        } else {
-            &mut self.entry
-        }
     }
 }

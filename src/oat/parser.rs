@@ -750,10 +750,6 @@ mod tests {
         bx(ty(kind))
     }
 
-    fn nty(kind: TyKind) -> Ty {
-        Ty { nullable: true, kind }
-    }
-
     fn vd(s: &str, exp: Exp) -> Vdecl {
         Vdecl {
             name: s.to_string(),

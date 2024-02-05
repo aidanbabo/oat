@@ -28,7 +28,7 @@ pub struct FunTy {
     pub ret: Ty,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operand {
     Null,
     Const(i64),
@@ -36,7 +36,7 @@ pub enum Operand {
     Id(Uid),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Bop {
     Add,
     Sub,
@@ -49,7 +49,7 @@ pub enum Bop {
     Xor,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Cnd {
     Eq,
     Ne,
@@ -59,7 +59,7 @@ pub enum Cnd {
     Sge,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Insn {
     Binop(Bop, Ty, Operand, Operand),
     Alloca(Ty),
@@ -71,7 +71,7 @@ pub enum Insn {
     Gep(Ty, Operand, Vec<Operand>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Terminator {
     Ret(Ty, Option<Operand>),
     Br(Lbl),

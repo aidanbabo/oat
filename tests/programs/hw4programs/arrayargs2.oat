@@ -1,3 +1,5 @@
+/*category path */
+/*exitcode 17 */
 int[] f(int[] x, int[] y, bool b) {
   if ( b ) {
     return x;

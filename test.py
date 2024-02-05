@@ -201,7 +201,8 @@ def main():
         return
 
     tests = filter_tests(tests)
-    # todo: group tests by category and sort
+    tests.sort(key=lambda t: t.path)
+    # todo: group tests by category
     if args.list:
         list_tests(tests)
     else:
@@ -209,7 +210,7 @@ def main():
 
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
-    hw4_test_categories = ['easiest', 'globals']
+    hw4_test_categories = ['easiest', 'globals', 'path']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', choices=['all', 'llvm', 'hw4'],  nargs='?')
