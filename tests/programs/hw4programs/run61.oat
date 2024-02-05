@@ -1,3 +1,6 @@
+/*category easy */
+/*exitcode 0 */
+/*prints 341 */
 global s = "341";
 
 int program(int argc, string[] argv) {

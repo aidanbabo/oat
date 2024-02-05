@@ -1,3 +1,6 @@
+/*category easy */
+/*exitcode 2 */
+/*args a */
 int f1(int i) { return f2(i); }
 int f2(int i) { return f3(i); }
 int f3(int i) { return f4(i); }

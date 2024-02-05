@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 2 */
 int program(int argc, string[] argv) {
   var a1=new int[][]{new int[1],new int[1],new int[1]};
   var a2=new int[][]{new int[1],new int[1],new int[1]};

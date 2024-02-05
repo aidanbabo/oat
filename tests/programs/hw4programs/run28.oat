@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 18 */
 int program (int argc, string[] argv) {
   var i=9;
   var j=i+i;

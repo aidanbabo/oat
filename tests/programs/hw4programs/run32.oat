@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 33 */
 global i=11;
 int f () {
   var i=12;

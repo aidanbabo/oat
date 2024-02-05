@@ -1,3 +1,6 @@
+/*category easy */
+/*exitcode 0 */
+/*prints abcde */
 int program (int argc, string[] argv) {
   print_string ("abcde");
   return 0;

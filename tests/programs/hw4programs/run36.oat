@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 0 */
 int program (int argc, string[] argv) {
   var a = new int[]{0,0};
   return a[1];

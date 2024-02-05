@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 1 */
 int program (int argc, string[] argv) {
   var b = new bool[]{true, false};
   var i = 0;

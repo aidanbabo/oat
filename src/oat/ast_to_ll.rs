@@ -84,6 +84,12 @@ impl Context {
 
     // todo: order independent top level ?
     pub fn lower(mut self, oprog: oast::Prog) -> llast::Prog {
+        for decl in &oprog {
+            if let oast::Decl::Fun(f) = decl {
+                self.add_function_to_globals(f);
+            }
+        }
+
         for decl in oprog {
             match decl {
                 oast::Decl::Var(v) => self.global(v.t),
@@ -153,9 +159,9 @@ impl Context {
         (string_ty, bitcast)
     }
 
-    fn function(&mut self, func: oast::Fdecl) {
-        let ret_ty = tipe(func.ret_ty);
-        let (arg_tys, names): (Vec<_>, Vec<_>) = func.args.into_iter().map(|(t, n)| (tipe(t), n)).unzip();
+    fn add_function_to_globals(&mut self, func: &oast::Fdecl) {
+        let ret_ty = tipe(func.ret_ty.clone());
+        let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (tipe(t), n)).unzip();
         let fun_ty = llast::FunTy {
             params: arg_tys,
             ret: ret_ty,
@@ -163,6 +169,16 @@ impl Context {
 
         let ty_fun = llast::Ty::Fun(fun_ty.params.clone(), Box::new(fun_ty.ret.clone()));
         assert!(self.globals.insert(func.name.clone(), (func.name.clone(), ty_fun)).is_none());
+
+    }
+
+    fn function(&mut self, func: oast::Fdecl) {
+        let ret_ty = tipe(func.ret_ty);
+        let (arg_tys, names): (Vec<_>, Vec<_>) = func.args.into_iter().map(|(t, n)| (tipe(t), n)).unzip();
+        let fun_ty = llast::FunTy {
+            params: arg_tys,
+            ret: ret_ty,
+        };
 
         let post_entry_lbl = "post_entry".to_string();
 
@@ -475,9 +491,6 @@ impl Context {
                 } else if let Some((ptr_gid, ty)) = self.globals.get(&id) {
                     (llast::Operand::Gid(ptr_gid.clone()), ty.clone())
                 } else {
-                    eprintln!("looking for {}", id);
-                    eprintln!("locals: {:?}", fun_ctx.locals);
-                    eprintln!("globals: {:?}", self.globals);
                     unreachable!()
                 }
             }

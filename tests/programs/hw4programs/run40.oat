@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 8 */
 global i=8;
 int f() {
   var j=0;

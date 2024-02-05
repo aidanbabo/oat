@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 31 */
 int f1() { return f2(); }
 int f2() { return f3(); }
 int f3() { return f4(); }

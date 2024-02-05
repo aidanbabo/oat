@@ -1,3 +1,5 @@
+/*category easy */
+/*exitcode 66 */
 int program (int argc, string[] argv) {
   var a = new int[][]{new int[]{0,1,2,3},
                       new int[]{4,5,6,7},
