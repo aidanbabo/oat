@@ -78,8 +78,15 @@ impl Context {
 
         ctx.llprog.edecls.push(("oat_assert_array_length".to_string(), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push(("oat_alloc_array".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
+        ctx.add_builtin("print_string", llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I8))], Box::new(llast::Ty::Void)));
+        ctx.add_builtin("print_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Void)));
         
         ctx
+    }
+
+    fn add_builtin(&mut self, name: &'static str, ty: llast::Ty) {
+        self.llprog.edecls.push((name.to_string(), ty.clone()));
+        self.globals.insert(name.to_string(), (name.to_string(), ty));
     }
 
     // todo: order independent top level ?

@@ -1,4 +1,5 @@
 import argparse
+import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 import pathlib
@@ -21,6 +22,7 @@ class Test:
     todo: bool = False
     prints: str = b''
     passed_by_name: bool = False
+    args: List[str] = dataclasses.field(default_factory=list)
 
 class TestResult(Enum):
     PASSED = 0
@@ -61,7 +63,10 @@ def parse_test(filepath: str) -> Test:
         elif opt == 'todo':
             test.todo = rest
         elif opt == 'prints':
-            test.prints = (rest + '\n').encode('utf8')
+            newline = '\n' if comment_str == ';;' else ''
+            test.prints = (rest +newline).encode('utf8')
+        elif opt == 'args':
+            test.args = rest.split()
         elif args.debug:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
@@ -126,6 +131,7 @@ def run_test(test: Test) -> TestResult:
         proc_args.append('--interpret-ll')
     if args.clang:
         proc_args.append('--clang')
+    # todo: program args to interpreter
     proc = subprocess.run(proc_args, stdout=subprocess.PIPE)
 
     if args.interpret_ll:
@@ -134,7 +140,7 @@ def run_test(test: Test) -> TestResult:
         if proc.returncode != 0:
             eprint('FAILED\ncompilation failed')
             return TestResult.FAILED
-        proc = subprocess.run('./a.out', stdout=subprocess.PIPE)
+        proc = subprocess.run(['./a.out'] + test.args, stdout=subprocess.PIPE)
         return eval_test(test, proc.returncode, proc.stdout)
 
 def filter_tests(tests: List[Test]) -> List[Test]:
