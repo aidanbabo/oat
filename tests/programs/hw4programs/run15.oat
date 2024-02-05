@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 19 */
 int f(int[][] a) {
   return a[1][1];
 }

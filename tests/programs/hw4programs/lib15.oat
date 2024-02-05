@@ -1,3 +1,7 @@
+/*category medium */
+/*exitcode 0 */
+/*args 123456789 */
+/*prints 45678 */
 string sub (string str, int start, int len) {
   var arr = array_of_string(str);
   var r = new int[len];

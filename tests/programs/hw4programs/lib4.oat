@@ -1,3 +1,6 @@
+/*category medium */
+/*exitcode 20 */
+/*prints 532 */
 global str = "hello"; 
 
 int program (int argc, string[] argv) {

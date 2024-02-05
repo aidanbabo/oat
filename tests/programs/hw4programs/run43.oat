@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 42 */
 global a = int[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][] null;
 
 int program (int argc, string[] argv) {

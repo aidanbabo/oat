@@ -1,3 +1,6 @@
+/*category medium */
+/*exitcode 0 */
+/*prints nnn */
 int program (int argc, string[] argv) {
   var a = new int[]{110, 110, 110};
   var str = string_of_array (a);

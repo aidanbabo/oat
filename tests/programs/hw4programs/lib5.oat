@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 20 */
 int program (int argc, string[] argv) {
   var str = "hello"; 
   var arr = array_of_string (str);

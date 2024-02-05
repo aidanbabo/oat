@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 4 */
 int program (int argc, string[] argv) {
   var arr=new int[][] {new int []{1,2}, new int[]{3,4}};
 

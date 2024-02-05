@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 13 */
 int program (int argc, string[] argv) {
   var x = 10;
   var a = new int[][]{new int[]{x+0+0, x+0+1, x+0+2},

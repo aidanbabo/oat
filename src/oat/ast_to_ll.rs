@@ -76,10 +76,16 @@ impl Context {
             sym_num: 0,
         };
 
+        let string_type = llast::Ty::Ptr(Box::new(llast::Ty::I8));
+        let int_array_type = llast::Ty::Ptr(Box::new(array_maker(llast::Ty::I64, 0)));
+
         ctx.llprog.edecls.push(("oat_assert_array_length".to_string(), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push(("oat_alloc_array".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
-        ctx.add_builtin("print_string", llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I8))], Box::new(llast::Ty::Void)));
+        ctx.add_builtin("print_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(llast::Ty::Void)));
         ctx.add_builtin("print_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Void)));
+        ctx.add_builtin("array_of_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(int_array_type.clone())));
+        ctx.add_builtin("string_of_array", llast::Ty::Fun(vec![int_array_type], Box::new(string_type.clone())));
+        ctx.add_builtin("string_of_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(string_type)));
         
         ctx
     }

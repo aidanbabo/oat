@@ -1,3 +1,6 @@
+/*category medium */
+/*exitcode 0 */
+/*prints Hello world! */
 int program (int argc, string[] argv) {
   var str = "Hello world!";
   print_string (str);

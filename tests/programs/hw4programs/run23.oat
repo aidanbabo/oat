@@ -1,3 +1,6 @@
+/*category medium */
+/*exitcode 0 */
+/*prints 123 */
 int program (int argc, string[] argv) {
   var strs = new string[][]{new string[]{"abc", "def"}, 
                             new string[]{"789", "123"}};

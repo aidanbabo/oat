@@ -1,3 +1,6 @@
+/*category medium */
+/*exitcode 0 */
+/*prints hello */
 global str = string[][][][][][][][][][] null;
 
 int program (int argc, string[] argv) {

@@ -1,3 +1,7 @@
+/*category medium */
+/*exitcode 5 */
+/*prints abcd */
+/*args a b c d */
 int program(int argc, string[] argv) {
   for (var i=1; i<argc; i=i+1;) {
     print_string (argv[i]);

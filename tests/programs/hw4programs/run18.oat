@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 231 */
 int program (int argc, string[] argv) {
   var a = new int[]{1, 100, 999};
   return a[2];

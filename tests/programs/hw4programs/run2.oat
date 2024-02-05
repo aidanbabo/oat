@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 6 */
 global i=0;
 
 int f(int x, int y) {

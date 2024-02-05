@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 153 */
 global i = 42;
 
 int f(int x) {

@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 7 */
 global i = 1;
 
 int f(int[] arr) {

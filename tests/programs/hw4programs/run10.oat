@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 5 */
 int[] f (int[] arr) {
   return arr;
 } 

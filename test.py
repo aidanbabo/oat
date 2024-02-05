@@ -216,7 +216,7 @@ def main():
 
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
-    hw4_test_categories = ['easiest', 'globals', 'path', 'easy']
+    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', choices=['all', 'llvm', 'hw4'],  nargs='?')

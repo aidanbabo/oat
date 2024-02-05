@@ -1,3 +1,5 @@
+/*category medium */
+/*exitcode 11 */
 global a = 1;
 
 int f() {

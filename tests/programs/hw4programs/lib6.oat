@@ -1,3 +1,6 @@
+/*category medium */
+/*exitcode 53 */
+/*prints 565 */
 int program (int argc, string[] argv) {
   var arr1 = new int[]{111,112,113,114,115};
   var str = string_of_array (arr1);
