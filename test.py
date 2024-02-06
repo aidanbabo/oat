@@ -224,7 +224,7 @@ def main():
         exit(1)
 
     if args.suite == 'all':
-        files = hw4_files() + custom_files()
+        files = hw4_files() + hw5_files() + custom_files()
         tests = parse_tests(files)
     elif args.suite == 'hw4':
         files = hw4_files()
@@ -257,7 +257,7 @@ def main():
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
     hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student', 'tc_hw4']
-    hw5_test_categories = ['tc_eq']
+    hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', nargs='?')

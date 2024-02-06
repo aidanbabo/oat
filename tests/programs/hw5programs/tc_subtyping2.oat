@@ -1,3 +1,5 @@
+/*category tc_subtyping */
+/*typecheck pass */
 struct A {}
 struct B { int x }
 
