@@ -184,6 +184,7 @@ impl Parser {
         self.peek().is_some_and(|t| t.kind == kind)
     }
 
+    #[track_caller]
     fn assert_next_is(&mut self, kind: TokenKind) -> ParseResult<&Token> {
         let Some(t) = self.consume() else { panic!("expected {kind:?} but got eof") };
         if t.kind == kind {
@@ -498,7 +499,7 @@ impl Parser {
                         if ty.nullable {
                             panic!("expected a struct name not a nullable struct type")
                         }
-                        let (fields, rparen) = self.parse_separated(Parser::parse_field_exp, TokenKind::Semi, TokenKind::LBrace)?;
+                        let (fields, rparen) = self.parse_separated(Parser::parse_field_exp, TokenKind::Semi, TokenKind::RBrace)?;
                         let loc = Range::merge(new_loc, rparen.loc);
                         Ok(Node { loc, t: ast::Exp::Struct(name, fields) })
                     }

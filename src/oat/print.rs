@@ -130,9 +130,12 @@ fn write_if<W: io::Write>(w: &mut W, s: &Stmt, indent: i32) -> io::Result<()> {
 }
 
 fn write_type<W: io::Write>(w: &mut W, t: &Tdecl) -> io::Result<()> {
-    writeln!(w, "struct {} {{", t.name)?;
-    for f in &t.fields {
-        writeln!(w, "{INDENT}{} {};", f.ty, f.name)?;
+    write!(w, "struct {} {{", t.name)?;
+    if !t.fields.is_empty() {
+        writeln!(w)?;
+        for f in &t.fields {
+            writeln!(w, "{INDENT}{} {};", f.ty, f.name)?;
+        }
     }
     writeln!(w, "}}")
 }
