@@ -1,3 +1,5 @@
+# todo: use pyright
+
 import argparse
 import dataclasses
 from dataclasses import dataclass
@@ -23,7 +25,7 @@ class Test:
     prints: str = b''
     passed_by_name: bool = False
     args: List[str] = dataclasses.field(default_factory=list)
-    compile_fail: bool = False
+    typecheck: str = ''
 
 class TestResult(Enum):
     PASSED = 0
@@ -78,8 +80,9 @@ def test_from_options(filepath: str, options: List[Tuple[str, str]]) -> Test:
                 test.prints = (rest + newline).encode('utf8')
         elif opt == 'args':
             test.args = rest.split()
-        elif opt == 'compilefail':
-            test.compile_fail = True
+        elif opt == 'typecheck':
+            assert rest in ['pass', 'fail']
+            test.typecheck = rest
         elif args.debug:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
@@ -144,20 +147,25 @@ def run_test(test: Test) -> TestResult:
         proc_args.append('--interpret-ll')
     if args.clang:
         proc_args.append('--clang')
+    if test.typecheck:
+        proc_args.append('--check')
     # todo: program args to interpreter
-    stderr = subprocess.PIPE if test.compile_fail else None
+    stderr = subprocess.PIPE if test.typecheck == 'fail' else None
 
     proc = subprocess.run(proc_args, stdout=subprocess.PIPE, stderr=stderr)
 
     if args.interpret_ll:
         return eval_interp_test(test, proc)
     else:
-        if test.compile_fail:
-            if proc.returncode != 0:
+        if test.typecheck:
+            if proc.returncode == 0 and test.typecheck == 'pass' or proc.returncode != 0 and test.typecheck == 'fail':
                 eprint('PASS')
                 return TestResult.PASSED
-            else:
+            elif proc.returncode == 0:
                 eprint('FAILED\ncompilation should have failed, but succeeded')
+                return TestResult.FAILED
+            else:
+                eprint('FAILED\ncompilation should have succeeded, but failed')
                 return TestResult.FAILED
 
         if proc.returncode != 0:
@@ -201,6 +209,10 @@ def hw4_files():
     files = [p for p in pathlib.Path('tests/programs/hw4programs').glob('*.oat')]
     return files
 
+def hw5_files():
+    files = [p for p in pathlib.Path('tests/programs/hw5programs').glob('*.oat')]
+    return files
+
 def custom_files():
     files = [p for p in pathlib.Path('tests/programs/custom').glob('*.oat')]
     return files
@@ -216,6 +228,9 @@ def main():
         tests = parse_tests(files)
     elif args.suite == 'hw4':
         files = hw4_files()
+        tests = parse_tests(files)
+    elif args.suite == 'hw5':
+        files = hw5_files()
         tests = parse_tests(files)
     elif args.suite == 'llvm':
         files = ll_files()
@@ -242,7 +257,7 @@ def main():
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
     hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student', 'tc_hw4']
-    hw5_test_categories = []
+    hw5_test_categories = ['tc_eq']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', nargs='?')

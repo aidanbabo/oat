@@ -17,6 +17,8 @@ struct Args {
     interpret_ll: bool,
     #[arg(long)]
     clang: bool,
+    #[arg(long)]
+    check: bool,
 }
 
 fn main() {
@@ -43,6 +45,10 @@ fn main() {
         if let Err(e) = oat::oat::typecheck(&prog) {
             eprintln!("{e:?}");
             process::exit(1);
+        }
+
+        if args.check {
+            return;
         }
 
         oat::oat::to_llvm(prog)
