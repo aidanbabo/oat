@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::ast::*;
+use super::Node;
 
 #[derive(Debug)]
 pub struct TypeError(String);
@@ -72,6 +73,30 @@ fn gexp(e: &Exp, globals: &HashMap<Ident, Ty>) -> Result<Ty, TypeError> {
     Ok(ty)
 }
 
+fn call(f: &Exp, args: &[Node<Exp>], locals: &HashMap<Ident, Ty>, globals: &HashMap<Ident, Ty>) -> Result<Ty, TypeError> {
+    let f_ty = exp(f, locals, globals)?;
+    if f_ty.nullable {
+        return Err(TypeError("can't call a possibly null value".to_string()));
+    }
+
+    let TyKind::Fun(arg_tys, ret_ty) = f_ty.kind else {
+        return Err(TypeError("can't call a non-function type".to_string()));
+    };
+
+    if args.len() != arg_tys.len() {
+        return Err(TypeError("wrong number of function arguments".to_string()));
+    }
+
+    for (arg, expected_ty) in args.iter().zip(arg_tys.iter()) {
+        let actual_ty = exp(arg, locals, globals)?;
+        if !subtype(&actual_ty, expected_ty) {
+            return Err(TypeError(format!("can't pass {actual_ty:?} to a function expecting {expected_ty:?}")));
+        }
+    }
+
+    Ok(*ret_ty)
+}
+
 fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, globals: &HashMap<Ident, Ty>) -> Result<Ty, TypeError> {
     let ty = match e {
         Exp::Null(t) => Ty { nullable: true, kind: t.kind.clone() },
@@ -127,7 +152,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, globals: &HashMap<Ident, Ty>) -> Re
         Exp::Length(_) => todo!(),
         Exp::Struct(_, _) => todo!(),
         Exp::Proj(_, _) => todo!(),
-        Exp::Call(_, _) => todo!(),
+        Exp::Call(f, args) => call(f, args, locals, globals)?,
         Exp::Bop(Binop::Eq | Binop::Neq, lhs, rhs) => {
             let l_ty = exp(lhs, locals, globals)?;
             let r_ty = exp(rhs, locals, globals)?;
@@ -191,7 +216,12 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, globals: &HashMa
                 return Err(TypeError("return value must match function return type".to_string()));
             }
         }
-        Stmt::Call(_, _) => todo!(),
+        Stmt::Call(f, args) => {
+            let ty = call(f, args, locals, globals)?;
+            if ty != (Ty { nullable: false, kind: TyKind::Void }) {
+                return Err(TypeError("expected void return for function call statement".to_string()));
+            }
+        }
         Stmt::If(cnd, if_blk, else_blk) => {
             let cnd_ty = exp(cnd, locals, globals)?;
             if cnd_ty != (Ty { nullable: false, kind: TyKind::Bool }) {
