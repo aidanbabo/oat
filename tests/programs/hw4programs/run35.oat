@@ -1,5 +1,5 @@
-/*category easy */
-/*exitcode 66 */
+/*category tc_hw4 */
+/*compilefail */
 global a= int[][] null;
 
 int program (int argc, string[] argv) {

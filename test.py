@@ -5,7 +5,7 @@ from enum import Enum
 import pathlib
 import subprocess
 import sys
-from typing import List
+from typing import List, Tuple
 
 OAT = 'target/release/oat'
 
@@ -23,12 +23,14 @@ class Test:
     prints: str = b''
     passed_by_name: bool = False
     args: List[str] = dataclasses.field(default_factory=list)
+    compile_fail: bool = False
 
 class TestResult(Enum):
     PASSED = 0
     FAILED = 1
     SKIPPED = 2
 
+# todo: it isn't a str
 def parse_test(filepath: str) -> Test:
     comment_str = '/*' if filepath.suffix == '.oat' else ';;'
 
@@ -42,16 +44,21 @@ def parse_test(filepath: str) -> Test:
                 split = line[2:-3].strip().split(' ', 1)
             else:
                 split = line[2:].strip().split(' ', 1)
+
             if len(split) == 2:
                 opt, rest = split
+                test_options.append((opt, rest))
             else:
-                if args.debug:
-                    eprint('strange split length')
-                continue
-            test_options.append((opt, rest))
+                opt = split[0]
+                test_options.append((opt, ''))
 
+    test = test_from_options(filepath, test_options)
+    return test
+
+def test_from_options(filepath: str, options: List[Tuple[str, str]]) -> Test:
+    is_oat = filepath.suffix == '.oat'
     test = Test(filepath)
-    for opt, rest in test_options:
+    for opt, rest in options:
         if opt == 'exitcode':
             test.exitcode = int(rest)
         elif opt == 'category':
@@ -67,10 +74,12 @@ def parse_test(filepath: str) -> Test:
                 # i hope nobody sees this!
                 test.prints = eval(rest).encode('utf8')
             else:
-                newline = '\n' if comment_str == ';;' else ''
+                newline = '\n' if not is_oat else ''
                 test.prints = (rest + newline).encode('utf8')
         elif opt == 'args':
             test.args = rest.split()
+        elif opt == 'compilefail':
+            test.compile_fail = True
         elif args.debug:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
@@ -136,14 +145,25 @@ def run_test(test: Test) -> TestResult:
     if args.clang:
         proc_args.append('--clang')
     # todo: program args to interpreter
-    proc = subprocess.run(proc_args, stdout=subprocess.PIPE)
+    stderr = subprocess.PIPE if test.compile_fail else None
+
+    proc = subprocess.run(proc_args, stdout=subprocess.PIPE, stderr=stderr)
 
     if args.interpret_ll:
         return eval_interp_test(test, proc)
     else:
+        if test.compile_fail:
+            if proc.returncode != 0:
+                eprint('PASS')
+                return TestResult.PASSED
+            else:
+                eprint('FAILED\ncompilation should have failed, but succeeded')
+                return TestResult.FAILED
+
         if proc.returncode != 0:
             eprint('FAILED\ncompilation failed')
             return TestResult.FAILED
+
         proc = subprocess.run(['./a.out'] + test.args, stdout=subprocess.PIPE)
         return eval_test(test, proc.returncode, proc.stdout)
 
@@ -201,7 +221,8 @@ def main():
         files = ll_files()
         tests = parse_tests(files)
     else:
-        t = parse_test(args.suite)
+        path = pathlib.Path(args.suite)
+        t = parse_test(path)
         t.passed_by_name = True
         run_test(t)
         return
@@ -220,11 +241,12 @@ def main():
 
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
-    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student']
+    hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student', 'tc_hw4']
+    hw5_test_categories = []
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('suite', default='all', choices=['all', 'llvm', 'hw4'],  nargs='?')
-    parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories, default='all')
+    parser.add_argument('suite', default='all', nargs='?')
+    parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories + hw5_test_categories, default='all')
     parser.add_argument('-l', '--list', action='store_true')
     parser.add_argument('--early', action='store_true')
     parser.add_argument('--interpret-ll', action='store_true', default=False)

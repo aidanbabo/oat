@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use super::{ast as oast, Node};
+use super::Node;
+use super::typechecker;
+use super::ast as oast;
 use crate::llvm::ast as llast;
 
 struct FunContext {
@@ -76,25 +78,15 @@ impl Context {
             sym_num: 0,
         };
 
-        let string_type = llast::Ty::Ptr(Box::new(llast::Ty::I8));
-        let int_array_type = llast::Ty::Ptr(Box::new(array_maker(llast::Ty::I64, 0)));
-
         ctx.llprog.edecls.push(("oat_assert_array_length".to_string(), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push(("oat_alloc_array".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
-        ctx.add_builtin("print_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(llast::Ty::Void)));
-        ctx.add_builtin("print_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Void)));
-        ctx.add_builtin("array_of_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(int_array_type.clone())));
-        ctx.add_builtin("string_of_array", llast::Ty::Fun(vec![int_array_type], Box::new(string_type.clone())));
-        ctx.add_builtin("string_of_int", llast::Ty::Fun(vec![llast::Ty::I64], Box::new(string_type.clone())));
-        ctx.add_builtin("length_of_string", llast::Ty::Fun(vec![string_type.clone()], Box::new(llast::Ty::I64)));
-        ctx.add_builtin("string_cat", llast::Ty::Fun(vec![string_type.clone(), string_type.clone()], Box::new(string_type)));
+        for (name, ty) in typechecker::BUILTINS.iter() {
+            let ty = tipe(ty.clone());
+            ctx.llprog.edecls.push((name.to_string(), ty.clone()));
+            ctx.globals.insert(name.to_string(), (name.to_string(), ty));
+        }
         
         ctx
-    }
-
-    fn add_builtin(&mut self, name: &'static str, ty: llast::Ty) {
-        self.llprog.edecls.push((name.to_string(), ty.clone()));
-        self.globals.insert(name.to_string(), (name.to_string(), ty));
     }
 
     // todo: order independent top level ?
@@ -475,7 +467,7 @@ impl Context {
     }
 
     fn oat_alloc_array(&mut self, fun_ctx: &mut FunContext, ty: llast::Ty, len: llast::Operand) -> (llast::Operand, llast::Ty, llast::Ty) {
-        let (i64_ptr_op, i64_ptr_ty) = self.call_builtin(fun_ctx, "oat_alloc_array", &[len]);
+        let (i64_ptr_op, i64_ptr_ty) = self.call_internal(fun_ctx, "oat_alloc_array", &[len]);
         let array_uid = self.gensym("array");
         let array_base_ty = array_maker(ty, 0);
         let array_ty = ptr_maker(array_base_ty.clone());
@@ -523,7 +515,7 @@ impl Context {
                 let len_ptr = self.gensym("len");
                 let len_ptr_insn = llast::Insn::Gep(*ptr_ty.clone(), aop.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(0)]);
                 fun_ctx.push_insn(len_ptr.clone(), len_ptr_insn);
-                self.call_builtin(fun_ctx, "oat_assert_array_length", &[llast::Operand::Id(len_ptr), iop.clone()]);
+                self.call_internal(fun_ctx, "oat_assert_array_length", &[llast::Operand::Id(len_ptr), iop.clone()]);
 
                 let gep_uid = self.gensym("index");
                 let gep = llast::Insn::Gep(*ptr_ty, aop, vec![llast::Operand::Const(0), llast::Operand::Const(1), iop]);
@@ -534,7 +526,7 @@ impl Context {
         }
     }
 
-    fn call_builtin(&mut self, fun_ctx: &mut FunContext, name: &'static str, args: &[llast::Operand]) -> (llast::Operand, llast::Ty) {
+    fn call_internal(&mut self, fun_ctx: &mut FunContext, name: &'static str, args: &[llast::Operand]) -> (llast::Operand, llast::Ty) {
         let ret = self.gensym("ret");
         let (_, ty) = self.llprog.edecls.iter().find(|(n, _)| n == name).expect("unknown builtin");
         let llast::Ty::Fun(arg_tys, ret_ty) = ty else { unreachable!() };
@@ -568,6 +560,6 @@ fn tipe(ot: oast::Ty) -> llast::Ty {
         TK::String => Lty::Ptr(Box::new(Lty::I8)),
         TK::Struct(_) => todo!(),
         TK::Array(t) => Lty::Ptr(Box::new(Lty::Struct(vec![Lty::I64, Lty::Array(0, Box::new(tipe(*t)))]))),
-        TK::Fun(_, _) => todo!(),
+        TK::Fun(args, ret) => Lty::Fun(args.into_iter().map(tipe).collect(), Box::new(tipe(*ret))),
     }
 }

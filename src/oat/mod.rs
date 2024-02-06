@@ -6,7 +6,7 @@ mod lexer;
 mod parser;
 mod ast_to_ll;
 mod print;
-mod typecheck;
+mod typechecker;
 
 use crate::llvm;
 
@@ -71,8 +71,8 @@ pub fn parse(input: &str) -> Result<ast::Prog, Box<dyn std::error::Error>> {
     Ok(prog)
 }
 
-pub fn typecheck(prog: &ast::Prog) -> Result<(), typecheck::TypeError> {
-    typecheck::check(prog)
+pub fn typecheck(prog: &ast::Prog) -> Result<(), typechecker::TypeError> {
+    typechecker::check(prog)
 }
 
 pub fn to_llvm(oprog: ast::Prog) -> llvm::ast::Prog {

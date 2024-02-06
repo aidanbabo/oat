@@ -1,10 +1,28 @@
 use std::collections::{HashMap, HashSet};
+use once_cell::sync::Lazy;
 
 use super::ast::*;
 use super::Node;
 
 #[derive(Debug)]
 pub struct TypeError(String);
+
+pub static BUILTINS: Lazy<HashMap<&str, Ty>> = Lazy::new(|| {
+    let string_type = Ty { nullable: false, kind: TyKind::String };
+    let int_array_type = Ty { nullable: false, kind: TyKind::Array(Box::new(Ty { nullable: false, kind: TyKind::Int })) };
+    let void_ty = Ty { nullable: false, kind: TyKind::Void };
+    let int_ty = Ty { nullable: false, kind: TyKind::Int };
+
+    let mut builtins = HashMap::new();
+    builtins.insert("print_string", Ty { nullable: false, kind: TyKind::Fun(vec![string_type.clone()], Box::new(void_ty.clone()))});
+    builtins.insert("print_int", Ty { nullable: false, kind: TyKind::Fun(vec![int_ty.clone()], Box::new(void_ty))});
+    builtins.insert("array_of_string", Ty { nullable: false, kind: TyKind::Fun(vec![string_type.clone()], Box::new(int_array_type.clone()))});
+    builtins.insert("string_of_array", Ty { nullable: false, kind: TyKind::Fun(vec![int_array_type], Box::new(string_type.clone()))});
+    builtins.insert("string_of_int", Ty { nullable: false, kind: TyKind::Fun(vec![int_ty.clone()], Box::new(string_type.clone()))});
+    builtins.insert("length_of_string", Ty { nullable: false, kind: TyKind::Fun(vec![string_type.clone()], Box::new(int_ty))});
+    builtins.insert("string_cat", Ty { nullable: false, kind: TyKind::Fun(vec![string_type.clone(), string_type.clone()], Box::new(string_type))});
+    builtins
+});
 
 fn subtype(sub: &Ty, sup: &Ty) -> bool {
     let simple_reflexive = matches!((&sub.kind, &sup.kind), (TyKind::Void, TyKind::Void) | (TyKind::Bool, TyKind::Bool) | (TyKind::Int, TyKind::Int));
@@ -298,6 +316,10 @@ pub fn check(prog: &Prog) -> Result<(), TypeError> {
     let mut globals: HashMap<Ident, Ty> = Default::default();
 
     // todo: struct types
+
+    for (name, ty) in BUILTINS.iter() {
+        globals.insert(name.to_string(), ty.clone());
+    }
 
     for decl in prog {
         if let Decl::Fun(f) = decl {

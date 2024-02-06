@@ -23,7 +23,7 @@ fn main() {
     let args = Args::parse();
     let Some(ext) = args.path.extension().and_then(|s| s.to_str()) else {
         eprintln!("need a file extension");
-        return;
+        process::exit(1);
     };
 
     let ll_prog = if ext == "oat" {
@@ -32,7 +32,7 @@ fn main() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e:?}");
-                return;
+                process::exit(1);
             }
         };
 
@@ -42,7 +42,7 @@ fn main() {
 
         if let Err(e) = oat::oat::typecheck(&prog) {
             eprintln!("{e:?}");
-            return;
+            process::exit(1);
         }
 
         oat::oat::to_llvm(prog)
@@ -52,12 +52,12 @@ fn main() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e}");
-                return;
+                process::exit(1);
             }
         }
     } else {
         eprintln!("Only supporting oat or ll files");
-        return;
+        process::exit(1);
     };
 
     if args.print_ll {

@@ -1,6 +1,5 @@
-/*category medium */
-/*exitcode 0 */
-/*prints 42 */
+/*category tc_hw4 */
+/*compilefail */
 global a = string[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][] null;
 
 
