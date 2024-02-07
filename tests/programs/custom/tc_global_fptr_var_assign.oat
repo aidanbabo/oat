@@ -1,0 +1,19 @@
+/*category custom */
+/*typecheck pass */
+global fptr = add1;
+
+int add1(int x, int y) {
+  return x + y;
+}
+
+int add2(int a, int b) {
+  return a + b;
+}
+
+int program(int argc, string[] argv) {
+  var s = 0;
+  s = s + fptr(1, 2);
+  fptr = add2;
+  s = s + fptr(3, 4);
+  return s;
+}

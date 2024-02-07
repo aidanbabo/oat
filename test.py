@@ -267,10 +267,11 @@ if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
     hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student', 'tc_hw4']
     hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement', 'tc_expression', 'tc_struct', 'tc_global', 'tc_other', 'tc_ok', 'tc_err']
+    custom_categories = ['custom']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', nargs='?')
-    parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories + hw5_test_categories, default='all')
+    parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories + hw5_test_categories + custom_categories, default='all')
     parser.add_argument('-l', '--list', action='store_true')
     parser.add_argument('--early', action='store_true')
     parser.add_argument('--interpret-ll', action='store_true', default=False)
