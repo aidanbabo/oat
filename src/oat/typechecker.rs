@@ -266,7 +266,7 @@ fn vdecl(vd: &Vdecl, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(
     Ok(())
 }
 
-fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(), TypeError> {
+fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<bool, TypeError> {
     match s {
         Stmt::Assn(lhs, rhs) => {
             let l_ty = exp(lhs, locals, ctx)?;
@@ -274,8 +274,12 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             if !subtype(&r_ty, &l_ty, ctx) {
                 return Err(TypeError("rhs must be a subtype of the lhs".to_string()));
             }
+            Ok(false)
         }
-        Stmt::Decl(vd) => vdecl(vd, locals, ctx)?,
+        Stmt::Decl(vd) => {
+            vdecl(vd, locals, ctx)?;
+            Ok(false)
+        }
         Stmt::Ret(val) => {
             let ty = if let Some(val) = val {
                 exp(val, locals, ctx)?
@@ -286,20 +290,24 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             if !subtype(&ty, ret_ty, ctx) {
                 return Err(TypeError("return value must match function return type".to_string()));
             }
+
+            Ok(true)
         }
         Stmt::Call(f, args) => {
             let ty = call(f, args, locals, ctx)?;
             if ty != (Ty { nullable: false, kind: TyKind::Void }) {
                 return Err(TypeError("expected void return for function call statement".to_string()));
             }
+            Ok(false)
         }
         Stmt::If(cnd, if_blk, else_blk) => {
             let cnd_ty = exp(cnd, locals, ctx)?;
             if cnd_ty != (Ty { nullable: false, kind: TyKind::Bool }) {
                 return Err(TypeError("if condition must be a bool".to_string()));
             }
-            block(if_blk, ret_ty, &mut locals.clone(), ctx)?;
-            block(else_blk, ret_ty, &mut locals.clone(), ctx)?;
+            let if_returns = block(if_blk, ret_ty, &mut locals.clone(), ctx)?;
+            let else_returns = block(else_blk, ret_ty, &mut locals.clone(), ctx)?;
+            Ok(if_returns && else_returns)
         }
         Stmt::IfNull(ty, name, e, if_blk, else_blk) => {
             let e_ty = exp(e, locals, ctx)?;
@@ -316,8 +324,9 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
                 return Err(TypeError("there is already a binding for this variable".to_string()));
             }
 
-            block(if_blk, ret_ty, &mut if_locals, ctx)?;
-            block(else_blk, ret_ty, &mut locals.clone(), ctx)?;
+            let if_returns = block(if_blk, ret_ty, &mut if_locals, ctx)?;
+            let else_returns = block(else_blk, ret_ty, &mut locals.clone(), ctx)?;
+            Ok(if_returns && else_returns)
         }
         Stmt::For(vds, cnd, upd, blk) => {
             let mut for_locals = locals.clone();
@@ -337,6 +346,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             }
 
             block(blk, ret_ty, &mut for_locals.clone(), ctx)?;
+            Ok(false)
         }
         Stmt::While(cnd, blk) => {
             let cnd_ty = exp(cnd, locals, ctx)?;
@@ -344,24 +354,32 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
                 return Err(TypeError("while condition must be a bool".to_string()));
             }
             block(blk, ret_ty, &mut locals.clone(), ctx)?;
+            Ok(false)
         }
     }
-    Ok(())
 }
 
-fn block(b: &Block, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(), TypeError> {
+fn block(b: &Block, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<bool, TypeError> {
+    let mut returns = false;
     for s in b {
-        stmt(s, ret_ty, locals, ctx)?;
+        if returns {
+            return Err(TypeError("unreachable statements after statement that returns".to_string()));
+        }
+        if stmt(s, ret_ty, locals, ctx)? {
+            returns = true;
+        }
     }
-    Ok(())
+    Ok(returns)
 }
 
 fn function_body(f: &Fdecl, ctx: &Context) -> Result<(), TypeError> {
     let mut locals: HashMap<Ident, Ty> = f.args.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
 
-    block(&f.body, &f.ret_ty, &mut locals, ctx)?;
+    let returns = block(&f.body, &f.ret_ty, &mut locals, ctx)?;
 
-    // todo: ends in return
+    if !returns {
+        return Err(TypeError("function body must return a value".to_string()));
+    }
 
     Ok(())
 }

@@ -264,6 +264,7 @@ impl Context {
                 let uid = self.gensym("_");
                 self.call(fun_ctx, f.t, args, uid);
             }
+            // todo: concept of definitely returns to remove unneeded labels
             oast::Stmt::If(cnd, if_blk, else_blk) => {
                 let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
                 let then_lbl = self.gensym("then");
