@@ -275,7 +275,42 @@ impl Context {
 
                 if_returns && else_returns
             }
-            oast::Stmt::IfNull(_, _, _, _, _) => todo!(),
+            oast::Stmt::IfNull(ty, name, exp, if_blk, else_blk) => {
+                let (cnd_op, cnd_ty) = self.exp(fun_ctx, exp.t);
+                let null_check_uid = self.gensym("_null_check");
+                let null_check = llast::Insn::Icmp(llast::Cnd::Ne, cnd_ty, cnd_op.clone(), llast::Operand::Null);
+                fun_ctx.push_insn(null_check_uid.clone(), null_check);
+
+                let then_lbl = self.gensym("then");
+                let else_lbl = self.gensym("else");
+                let after_lbl = self.gensym("after");
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(llast::Operand::Id(null_check_uid), then_lbl.clone(), else_lbl.clone()));
+
+                fun_ctx.start_block(then_lbl.clone());
+
+                let llty = tipe(ty);
+                let alloca_uid = self.gensym(&name);
+                fun_ctx.cfg.entry.insns.push((alloca_uid.clone(), llast::Insn::Alloca(llty.clone())));
+                fun_ctx.locals.insert(name, (alloca_uid.clone(), llty.clone()));
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(llty, cnd_op, llast::Operand::Id(alloca_uid)));
+
+                let if_returns = self.block(fun_ctx, if_blk);
+                if !if_returns {
+                    fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                }
+
+                fun_ctx.start_block(else_lbl.clone());
+                let else_returns = self.block(fun_ctx, else_blk);
+                if !else_returns {
+                    fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                }
+
+                if !if_returns || !else_returns {
+                    fun_ctx.start_block(after_lbl.clone());
+                }
+
+                if_returns && else_returns
+            }
             oast::Stmt::For(vdecls, cnd, update, blk) => {
                 // todo: infinite loop and return analysis buffs?
                 let for_top_lbl = self.gensym("for_top");
@@ -347,7 +382,7 @@ impl Context {
 
     fn exp(&mut self, fun_ctx: &mut FunContext, exp: oast::Exp) -> (llast::Operand, llast::Ty) {
         let (op, ty): (llast::Operand, llast::Ty) = match exp {
-            oast::Exp::Null(t) => (llast::Operand::Const(0), tipe(t)),
+            oast::Exp::Null(t) => (llast::Operand::Null, tipe(t)),
             oast::Exp::Bool(b) => (llast::Operand::Const(b as i64), llast::Ty::I1),
             oast::Exp::Int(n) => (llast::Operand::Const(n), llast::Ty::I64),
             oast::Exp::Str(s) => {

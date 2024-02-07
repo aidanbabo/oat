@@ -180,7 +180,7 @@ def run_test(test: Test) -> TestResult:
             eprint('FAILED\ncompilation failed')
             return TestResult.FAILED
 
-        proc = subprocess.run(['./a.out'] + test.args, stdout=subprocess.PIPE)
+        proc = subprocess.run(['./a.out'] + test.args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return eval_test(test, proc.returncode, proc.stdout)
 
 def filter_tests(tests: List[Test]) -> List[Test]:
