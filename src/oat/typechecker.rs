@@ -166,7 +166,24 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             }
             Ty { nullable: false, kind: TyKind::Array(Box::new(ty.clone())) }
         }
-        Exp::ArrInit(_, _, _, _) => todo!(),
+        Exp::ArrInit(ty, len, name, init) => {
+            let len_ty = exp(len, locals, ctx)?;
+            let int_ty = Ty { nullable: false, kind: TyKind::Int };
+            if len_ty != int_ty {
+                return Err(TypeError("array length must be an int".to_string()));
+            }
+            let mut init_locals = locals.clone();
+            if let Some(_existing_binding) = init_locals.insert(name.clone(), int_ty) {
+                // todo: not really a type error now is it
+                return Err(TypeError("there is already a binding for this variable".to_string()));
+            }
+            let init_ty = exp(init, &init_locals, ctx)?;
+            if !subtype(&init_ty, ty, ctx) {
+                return Err(TypeError("array initializer must return subtype of the array element type".to_string()));
+            }
+
+            Ty { nullable: false, kind: TyKind::Array(Box::new(ty.clone())) }
+        }
         Exp::Index(arr, ix) => {
             let a_ty = exp(arr, locals, ctx)?;
             let ix_ty = exp(ix, locals, ctx)?;
