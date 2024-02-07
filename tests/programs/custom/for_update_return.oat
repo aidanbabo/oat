@@ -1,0 +1,6 @@
+/*category custom */
+/*exitcode 0 */
+int program(int argc, string[] argv) {
+  for (;;return 0;) {}
+  return 1;
+}

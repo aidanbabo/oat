@@ -302,7 +302,7 @@ impl Context {
             }
             oast::Stmt::IfNull(_, _, _, _, _) => todo!(),
             oast::Stmt::For(vdecls, cnd, update, blk) => {
-                // todo: fix up kinda crappy code gen
+                // todo: infinite loop and return analysis buffs?
                 let for_top_lbl = self.gensym("for_top");
                 let for_body_lbl = self.gensym("for_body");
                 let for_update_lbl = self.gensym("for_update");
@@ -328,10 +328,14 @@ impl Context {
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_update_lbl.clone()));
 
                 fun_ctx.start_block(for_update_lbl.clone());
-                if let Some(upd) = update {
-                    self.stmt(fun_ctx, upd.t);
+                let update_returns = if let Some(upd) = update {
+                    self.stmt(fun_ctx, upd.t)
+                } else {
+                    false
+                };
+                if !update_returns {
+                    fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
                 }
-                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(for_top_lbl.clone()));
                 fun_ctx.pop_scope();
 
                 fun_ctx.start_block(for_after_lbl.clone());
