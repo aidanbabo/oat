@@ -258,6 +258,9 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
 
 fn vdecl(vd: &Vdecl, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(), TypeError> {
     let ty = exp(&vd.exp, locals, ctx)?;
+    if ty == (Ty { nullable: false, kind: TyKind::Void }) {
+        return Err(TypeError("cannot declare variable of void type".to_string()));
+    }
     if let Some(_existing_binding) = locals.insert(vd.name.clone(), ty) {
         // todo: not really a type error now is it
         return Err(TypeError("there is already a binding for this variable".to_string()));
