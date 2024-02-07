@@ -38,7 +38,7 @@ int val_at(int[][] board, int i, int j) {
     } else {
         return 0;
     }
-    return 0;
+    /* return 0; */
 }
 
 int program (int argc, string[] argv) {

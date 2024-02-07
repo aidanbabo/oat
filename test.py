@@ -192,7 +192,7 @@ def filter_tests(tests: List[Test]) -> List[Test]:
 
 def run_tests(tests: List[Test]):
     passed = failed = skipped = 0
-    for t in tests:
+    for i, t in enumerate(tests):
         tr = run_test(t)
         if tr == TestResult.PASSED:
             passed += 1
@@ -200,6 +200,7 @@ def run_tests(tests: List[Test]):
             skipped += 1
         elif tr == TestResult.FAILED:
             if args.early:
+                print(f"exiting early. {len(tests) - i - 1} tests left unrun")
                 break
             failed += 1
     print(f"{passed} passed, {failed} failed, {skipped} skipped")

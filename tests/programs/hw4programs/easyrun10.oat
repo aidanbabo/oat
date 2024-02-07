@@ -16,6 +16,5 @@ int program (int argc, string[] argv) {
   } else {
     return -ans;
   }
-
-  return ans;
+  /* return ans; */
 }

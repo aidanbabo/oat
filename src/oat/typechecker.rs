@@ -9,7 +9,8 @@ pub struct TypeError(String);
 
 struct Context {
     structs: HashMap<Ident, Vec<(Ty, Ident)>>,
-    globals: HashMap<Ident, Ty>,
+    vars: HashMap<Ident, Ty>,
+    funcs: HashMap<Ident, Ty>,
 }
 
 pub static BUILTINS: Lazy<HashMap<&str, Ty>> = Lazy::new(|| {
@@ -94,7 +95,15 @@ fn gexp(e: &Exp, ctx: &Context) -> Result<Ty, TypeError> {
         Exp::Bool(_) => Ty { nullable: false, kind: TyKind::Bool },
         Exp::Int(_) => Ty { nullable: false, kind: TyKind::Int },
         Exp::Str(_) => Ty { nullable: false, kind: TyKind::String },
-        Exp::Id(name) => ctx.globals.get(name).expect("no such variable").clone(),
+        Exp::Id(name) => {
+            if let Some(ty) = ctx.vars.get(name) {
+                ty.clone()
+            } else if let Some(ty) = ctx.funcs.get(name) {
+                ty.clone()
+            } else {
+                return Err(TypeError(format!("unresolved global identifier {name}")));
+            }
+        }
         Exp::ArrElems(t, els) => {
             for e in els {
                 let sub = gexp(e, ctx)?;
@@ -112,7 +121,7 @@ fn gexp(e: &Exp, ctx: &Context) -> Result<Ty, TypeError> {
 }
 
 fn call(f: &Exp, args: &[Node<Exp>], locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeError> {
-    let f_ty = exp(f, locals, ctx)?;
+    let f_ty = exp(f, locals, ctx, false)?;
     if f_ty.nullable {
         return Err(TypeError("can't call a possibly null value".to_string()));
     }
@@ -126,7 +135,7 @@ fn call(f: &Exp, args: &[Node<Exp>], locals: &HashMap<Ident, Ty>, ctx: &Context)
     }
 
     for (arg, expected_ty) in args.iter().zip(arg_tys.iter()) {
-        let actual_ty = exp(arg, locals, ctx)?;
+        let actual_ty = exp(arg, locals, ctx, false)?;
         if !subtype(&actual_ty, expected_ty, ctx) {
             return Err(TypeError(format!("can't pass {actual_ty:?} to a function expecting {expected_ty:?}")));
         }
@@ -135,7 +144,7 @@ fn call(f: &Exp, args: &[Node<Exp>], locals: &HashMap<Ident, Ty>, ctx: &Context)
     Ok(*ret_ty)
 }
 
-fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeError> {
+fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context, lhs: bool) -> Result<Ty, TypeError> {
     let ty = match e {
         Exp::Null(t) => Ty { nullable: true, kind: t.kind.clone() },
         Exp::Bool(_) => Ty { nullable: false, kind: TyKind::Bool },
@@ -144,7 +153,12 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
         Exp::Id(n) => {
             if let Some(ty) = locals.get(n) {
                 ty.clone()
-            } else if let Some(ty) = ctx.globals.get(n) {
+            } else if let Some(ty) = ctx.vars.get(n) {
+                ty.clone()
+            } else if let Some(ty) = ctx.funcs.get(n) {
+                if lhs {
+                    return Err(TypeError("cannot use a function name as a global variable".to_string()));
+                }
                 ty.clone()
             } else {
                 return Err(TypeError(format!("no such binding {n}")));
@@ -152,7 +166,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
         }
         Exp::ArrElems(t, els) => {
             for e in els {
-                let sub = exp(e, locals, ctx)?;
+                let sub = exp(e, locals, ctx, false)?;
                 if !subtype(&sub, t, ctx) {
                     return Err(TypeError("array elem isn't a subtype".to_string()));
                 }
@@ -163,13 +177,13 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             if ty.kind.is_ref() && !ty.nullable {
                 return Err(TypeError("cannot have non-nullable reference types in default initialized arrays".to_string()));
             }
-            if exp(len, locals, ctx)? != (Ty { nullable: false, kind: TyKind::Int }) {
+            if exp(len, locals, ctx, false)? != (Ty { nullable: false, kind: TyKind::Int }) {
                 return Err(TypeError("len must be an int".to_string()));
             }
             Ty { nullable: false, kind: TyKind::Array(Box::new(ty.clone())) }
         }
         Exp::ArrInit(ty, len, name, init) => {
-            let len_ty = exp(len, locals, ctx)?;
+            let len_ty = exp(len, locals, ctx, false)?;
             let int_ty = Ty { nullable: false, kind: TyKind::Int };
             if len_ty != int_ty {
                 return Err(TypeError("array length must be an int".to_string()));
@@ -179,7 +193,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
                 // todo: not really a type error now is it
                 return Err(TypeError("there is already a binding for this variable".to_string()));
             }
-            let init_ty = exp(init, &init_locals, ctx)?;
+            let init_ty = exp(init, &init_locals, ctx, false)?;
             if !subtype(&init_ty, ty, ctx) {
                 return Err(TypeError("array initializer must return subtype of the array element type".to_string()));
             }
@@ -187,8 +201,8 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             Ty { nullable: false, kind: TyKind::Array(Box::new(ty.clone())) }
         }
         Exp::Index(arr, ix) => {
-            let a_ty = exp(arr, locals, ctx)?;
-            let ix_ty = exp(ix, locals, ctx)?;
+            let a_ty = exp(arr, locals, ctx, false)?;
+            let ix_ty = exp(ix, locals, ctx, false)?;
 
             let TyKind::Array(t) = a_ty.kind else {
                 return Err(TypeError("cannot index into non-array type".to_string()));
@@ -205,7 +219,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             (*t).clone()
         }
         Exp::Length(a) => {
-            let ty = exp(a, locals, ctx)?;
+            let ty = exp(a, locals, ctx, false)?;
             let TyKind::Array(_) = ty.kind else {
                 return Err(TypeError("cannot get length of non-array type".to_string()));
             };
@@ -222,7 +236,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
 
             for (expected_ty, name) in fields {
                 let (_, e) = inits.iter().find(|(n, _)| name == n).expect("missing field member");
-                let actual_ty = exp(e, locals, ctx)?;
+                let actual_ty = exp(e, locals, ctx, false)?;
 
                 if !subtype(&actual_ty, expected_ty, ctx) {
                     return Err(TypeError(format!("wrong type in struct initializer. expected {expected_ty:?} but found {actual_ty:?}")));
@@ -232,7 +246,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             Ty { nullable: false, kind: TyKind::Struct(name.clone()) }
         }
         Exp::Proj(e, field_name) => {
-            let lhs_ty = exp(e, locals, ctx)?;
+            let lhs_ty = exp(e, locals, ctx, false)?;
             let TyKind::Struct(name) = lhs_ty.kind else {
                 return Err(TypeError("cannot get field of non-struct type".to_string()));
             };
@@ -247,8 +261,8 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
         }
         Exp::Call(f, args) => call(f, args, locals, ctx)?,
         Exp::Bop(Binop::Eq | Binop::Neq, lhs, rhs) => {
-            let l_ty = exp(lhs, locals, ctx)?;
-            let r_ty = exp(rhs, locals, ctx)?;
+            let l_ty = exp(lhs, locals, ctx, false)?;
+            let r_ty = exp(rhs, locals, ctx, false)?;
             if subtype(&l_ty, &r_ty, ctx) && subtype(&r_ty, &l_ty, ctx) {
                 Ty { nullable: false, kind: TyKind::Bool }
             } else {
@@ -256,8 +270,8 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             }
         }
         Exp::Bop(b, lhs, rhs) => {
-            let l_ty = exp(lhs, locals, ctx)?;
-            let r_ty = exp(rhs, locals, ctx)?;
+            let l_ty = exp(lhs, locals, ctx, false)?;
+            let r_ty = exp(rhs, locals, ctx, false)?;
             let b_ty = bop_ty(*b);
             if l_ty == b_ty.0 && r_ty == b_ty.1 {
                 b_ty.2
@@ -266,7 +280,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             }
         }
         Exp::Uop(u, e) => {
-            let ty = exp(e, locals, ctx)?;
+            let ty = exp(e, locals, ctx, false)?;
             let u_ty = uop_ty(*u);
             if ty == u_ty.0 {
                 u_ty.1
@@ -279,7 +293,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
 }
 
 fn vdecl(vd: &Vdecl, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(), TypeError> {
-    let ty = exp(&vd.exp, locals, ctx)?;
+    let ty = exp(&vd.exp, locals, ctx, false)?;
     if ty == (Ty { nullable: false, kind: TyKind::Void }) {
         return Err(TypeError("cannot declare variable of void type".to_string()));
     }
@@ -294,8 +308,8 @@ fn vdecl(vd: &Vdecl, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(
 fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<bool, TypeError> {
     match s {
         Stmt::Assn(lhs, rhs) => {
-            let l_ty = exp(lhs, locals, ctx)?;
-            let r_ty = exp(rhs, locals, ctx)?;
+            let l_ty = exp(lhs, locals, ctx, true)?;
+            let r_ty = exp(rhs, locals, ctx, false)?;
             if !subtype(&r_ty, &l_ty, ctx) {
                 return Err(TypeError("rhs must be a subtype of the lhs".to_string()));
             }
@@ -307,7 +321,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
         }
         Stmt::Ret(val) => {
             let ty = if let Some(val) = val {
-                exp(val, locals, ctx)?
+                exp(val, locals, ctx, false)?
             } else {
                 Ty { nullable: false, kind: TyKind::Void }
             };
@@ -326,7 +340,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             Ok(false)
         }
         Stmt::If(cnd, if_blk, else_blk) => {
-            let cnd_ty = exp(cnd, locals, ctx)?;
+            let cnd_ty = exp(cnd, locals, ctx, false)?;
             if cnd_ty != (Ty { nullable: false, kind: TyKind::Bool }) {
                 return Err(TypeError("if condition must be a bool".to_string()));
             }
@@ -335,7 +349,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             Ok(if_returns && else_returns)
         }
         Stmt::IfNull(ty, name, e, if_blk, else_blk) => {
-            let e_ty = exp(e, locals, ctx)?;
+            let e_ty = exp(e, locals, ctx, false)?;
             if !e_ty.nullable {
                 return Err(TypeError("if? expression type must be a nullable type".to_string()));
             }
@@ -360,7 +374,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             }
 
             if let Some(cnd) = cnd {
-                let cnd_ty = exp(cnd, &for_locals, ctx)?;
+                let cnd_ty = exp(cnd, &for_locals, ctx, false)?;
                 if cnd_ty != (Ty { nullable: false, kind: TyKind::Bool }) {
                     return Err(TypeError("while condition must be a bool".to_string()));
                 }
@@ -374,7 +388,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             Ok(false)
         }
         Stmt::While(cnd, blk) => {
-            let cnd_ty = exp(cnd, locals, ctx)?;
+            let cnd_ty = exp(cnd, locals, ctx, false)?;
             if cnd_ty != (Ty { nullable: false, kind: TyKind::Bool }) {
                 return Err(TypeError("while condition must be a bool".to_string()));
             }
@@ -445,38 +459,46 @@ fn type_decl(t: &Tdecl) -> Result<Vec<(Ty, Ident)>, TypeError> {
 }
 
 pub fn check(prog: &Prog) -> Result<(), TypeError> {
-    let mut globals: HashMap<Ident, Ty> = Default::default();
+    let mut structs: HashMap<Ident, Vec<(Ty, Ident)>> = Default::default();
+    let mut funcs: HashMap<Ident, Ty> = Default::default();
 
-    let mut named_types: HashMap<Ident, Vec<(Ty, Ident)>> = Default::default();
     for decl in prog {
         if let Decl::Type(t) = decl {
             let fields = type_decl(t)?;
-            if named_types.insert(t.name.clone(), fields).is_some() {
+            if structs.insert(t.name.clone(), fields).is_some() {
                 return Err(TypeError(format!("a struct with name {} already exists", t.name)));
             }
         }
     }
 
     for (name, ty) in BUILTINS.iter() {
-        globals.insert(name.to_string(), ty.clone());
+        assert!(funcs.insert(name.to_string(), ty.clone()).is_none(), "function names can't conflict with type names");
     }
 
     for decl in prog {
         if let Decl::Fun(f) = decl {
             let (name, ty) = function_header(f)?;
-            globals.insert(name, ty);
+            if let Some(n) = funcs.insert(name, ty) {
+                return Err(TypeError(format!("a global function with name {} already exists", n)));
+            }
         }
     }
 
     let mut context = Context {
-        structs: named_types,
-        globals,
+        structs,
+        vars: Default::default(),
+        funcs,
     };
 
     for decl in prog {
         if let Decl::Var(v) = decl {
             let (name, ty) = global(v, &context)?;
-            context.globals.insert(name, ty);
+            if let Some(n) = context.funcs.get(&name) {
+                return Err(TypeError(format!("a global with name {} already exists", n)));
+            }
+            if let Some(n) = context.vars.insert(name, ty) {
+                return Err(TypeError(format!("a global with name {} already exists", n)));
+            }
         }
     }
 
