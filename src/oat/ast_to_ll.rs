@@ -410,7 +410,16 @@ impl Context {
                 (array_op, array_ty)
             }
             oast::Exp::ArrInit(_, _, _, _) => todo!(),
-            oast::Exp::Length(_) => todo!(),
+            oast::Exp::Length(e) => {
+                let (array_op, array_ty) = self.exp(fun_ctx, e.t);
+                let llast::Ty::Ptr(array_base_ty) = array_ty else { unreachable!() };
+                let gep = llast::Insn::Gep(*array_base_ty, array_op, vec![llast::Operand::Const(0), llast::Operand::Const(0)]);
+                let len_ptr_uid = self.gensym("_len_ptr");
+                fun_ctx.push_insn(len_ptr_uid.clone(), gep);
+                let uid = self.gensym("_len");
+                fun_ctx.push_insn(uid.clone(), llast::Insn::Load(llast::Ty::I64, llast::Operand::Id(len_ptr_uid)));
+                (llast::Operand::Id(uid), llast::Ty::I64)
+            }
             oast::Exp::Struct(_, _) => todo!(),
             oast::Exp::Call(f, args) => {
                 let uid = self.gensym("call");
