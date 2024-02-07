@@ -1,5 +1,5 @@
 /*category struct */
-/*exitcode 235 */
+/*exitcode 253 */
 /*prints hello */
 struct Test {
   int i;

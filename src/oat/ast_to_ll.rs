@@ -50,7 +50,8 @@ pub struct Context {
     llprog: llast::Prog,
     globals: HashMap<oast::Ident, (llast::Gid, llast::Ty)>,
     sym_num: usize,
-    tctx: typechecker::Context,
+    global_var_tys: HashMap<oast::Ident, llast::Ty>,
+    structs: HashMap<oast::Ident, Vec<(llast::Ty, oast::Ident)>>,
 }
 
 impl Context {
@@ -64,11 +65,16 @@ impl Context {
             },
             globals: Default::default(),
             sym_num: 0,
-            tctx,
+            global_var_tys: tctx.vars.into_iter().map(|(n, t)| (n, tipe(t))).collect(),
+            structs: tctx.structs.into_iter().map(|(n, fs)| {
+                let pairs = fs.into_iter().map(|(ty, n)| (tipe(ty), n)).collect();
+                (n, pairs)
+            }).collect(),
         };
 
         ctx.llprog.edecls.push(("oat_assert_array_length".to_string(), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push(("oat_alloc_array".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
+        ctx.llprog.edecls.push(("oat_malloc".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
         for (name, ty) in typechecker::BUILTINS.iter() {
             let ty = tipe(ty.clone());
             let llast::Ty::Ptr(ty) = ty else { unreachable!() };
@@ -137,6 +143,21 @@ impl Context {
                 self.make_global(tmp_uid.clone(), tmp_ty.clone(), tmp_ginit);
 
                 (ptr_maker(new_ty.clone()), llast::Ginit::Bitcast(ptr_maker(tmp_ty), Box::new(llast::Ginit::Gid(tmp_uid)), ptr_maker(new_ty)))
+            }
+            oast::Exp::Struct(struct_name, inits) => {
+                let fields = self.structs[&struct_name].clone();
+                let struct_ty = llast::Ty::Named(struct_name.clone());
+                let ginits = fields.iter().map(|(ty, name)| {
+                    let (_, exp) = inits.iter().find(|(n, _)| n == name).expect("ensured by typechecker");
+                    // todo bad exp.clone() :/
+                    let (_, init) = self.gexp(exp.t.clone(), format!("{struct_name}.{name}"));
+                    (ty.clone(), init)
+                }).collect();
+
+                let struct_uid = self.gensym(&name);
+                self.make_global(struct_uid.clone(), struct_ty.clone(), llast::Ginit::Struct(ginits));
+                let struct_ptr_ty = ptr_maker(struct_ty.clone());
+                (struct_ptr_ty, llast::Ginit::Gid(struct_uid))
             }
             _ => unreachable!(),
         };
@@ -467,7 +488,29 @@ impl Context {
                 fun_ctx.push_insn(uid.clone(), llast::Insn::Load(llast::Ty::I64, llast::Operand::Id(len_ptr_uid)));
                 (llast::Operand::Id(uid), llast::Ty::I64)
             }
-            oast::Exp::Struct(_, _) => todo!(),
+            oast::Exp::Struct(struct_name, inits) => {
+                let fields = self.structs[&struct_name].clone();
+                let struct_base_ty = llast::Ty::Named(struct_name.clone());
+                let struct_ty = llast::Ty::Ptr(Box::new(struct_base_ty.clone()));
+
+                let struct_size_bytes = fields.len() * 8;
+                let (struct_storage_op_raw, malloc_ty) = self.call_internal(fun_ctx, "oat_malloc", &[llast::Operand::Const(struct_size_bytes as i64)]);
+                let struct_uid = self.gensym("_struct_ptr");
+                fun_ctx.push_insn(struct_uid.clone(), llast::Insn::Bitcast(malloc_ty, struct_storage_op_raw, struct_ty.clone()));
+                let struct_ptr = llast::Operand::Id(struct_uid);
+
+                for (ix, (ty, name)) in fields.into_iter().enumerate() {
+                    let (_, exp) = inits.iter().find(|(n, _)| n == &name).expect("ensured by typechecker");
+                    // todo bad exp.clone() :/
+                    let (op, _) = self.exp(fun_ctx, exp.t.clone());
+
+                    let gep_uid = self.gensym(&format!("_{struct_name}.{name}_init"));
+                    fun_ctx.push_insn(gep_uid.clone(), llast::Insn::Gep(struct_base_ty.clone(), struct_ptr.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(ix as i64)]));
+                    fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty, op, llast::Operand::Id(gep_uid)));
+                }
+
+                (struct_ptr, struct_ty)
+            }
             oast::Exp::Call(f, args) => {
                 let uid = self.gensym("call");
                 self.call(fun_ctx, f.t, args, uid)
@@ -571,7 +614,6 @@ impl Context {
     fn lhs(&mut self, fun_ctx: &mut FunContext, lhs: oast::Exp) -> (llast::Operand, llast::Ty) {
         match lhs {
             oast::Exp::Id(id) => {
-                // todo: support multiple scopes
                 if let Some((ptr_uid, ty)) = fun_ctx.locals.get(&id) {
                     (llast::Operand::Id(ptr_uid.clone()), ty.clone())
                 } else if let Some((ptr_gid, ty)) = self.globals.get(&id) {
@@ -580,7 +622,19 @@ impl Context {
                     unreachable!()
                 }
             }
-            oast::Exp::Proj(_, _) => todo!(),
+            oast::Exp::Proj(exp, field_name) => {
+                let (struct_op, struct_ty) = self.exp(fun_ctx, exp.t);
+                let llast::Ty::Ptr(p) = &struct_ty else { unreachable!() };
+                let struct_base_ty = *p.clone();
+                let llast::Ty::Named(struct_name) = &struct_base_ty else { unreachable!() };
+                let gep_uid = self.gensym(&format!("_{struct_name}.{field_name}"));
+
+                let fields = &self.structs[struct_name];
+                let index = fields.iter().position(|(_, n)| n == &field_name).unwrap();
+                let (field_ty, _) = &fields[index];
+                fun_ctx.push_insn(gep_uid.clone(), llast::Insn::Gep(struct_base_ty, struct_op, vec![llast::Operand::Const(0), llast::Operand::Const(index as i64)]));
+                (llast::Operand::Id(gep_uid), field_ty.clone())
+            }
             oast::Exp::Index(arr, ix) => {
                 let (aop, aty) = self.exp(fun_ctx, arr.t);
                 let (iop, _) = self.exp(fun_ctx, ix.t);
@@ -616,8 +670,9 @@ impl Context {
         (llast::Operand::Id(ret), ret_ty)
     }
 
-    fn tipe_decl(&mut self, _t: oast::Tdecl) {
-        todo!()
+    fn tipe_decl(&mut self, t: oast::Tdecl) {
+        let fields = self.structs[&t.name].iter().map(|(t, _)| t).cloned().collect();
+        self.llprog.tdecls.insert(t.name, llast::Ty::Struct(fields));
     }
 }
 
@@ -637,7 +692,7 @@ fn tipe(ot: oast::Ty) -> llast::Ty {
         TK::Bool => Lty::I1,
         TK::Int => Lty::I64,
         TK::String => Lty::Ptr(Box::new(Lty::I8)),
-        TK::Struct(_) => todo!(),
+        TK::Struct(name) => Lty::Ptr(Box::new(Lty::Named(name))),
         TK::Array(t) => Lty::Ptr(Box::new(Lty::Struct(vec![Lty::I64, Lty::Array(0, Box::new(tipe(*t)))]))),
         TK::Fun(args, ret) => Lty::Ptr(Box::new(Lty::Fun(args.into_iter().map(tipe).collect(), Box::new(tipe(*ret))))),
     }
