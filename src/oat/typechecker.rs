@@ -17,10 +17,12 @@ pub static BUILTINS: Lazy<HashMap<&str, Ty>> = Lazy::new(|| {
     let int_array_type = Ty { nullable: false, kind: TyKind::Array(Box::new(Ty { nullable: false, kind: TyKind::Int })) };
     let void_ty = Ty { nullable: false, kind: TyKind::Void };
     let int_ty = Ty { nullable: false, kind: TyKind::Int };
+    let bool_ty = Ty { nullable: false, kind: TyKind::Bool };
 
     let mut builtins = HashMap::new();
     builtins.insert("print_string", Ty { nullable: false, kind: TyKind::Fun(vec![string_type.clone()], Box::new(void_ty.clone()))});
-    builtins.insert("print_int", Ty { nullable: false, kind: TyKind::Fun(vec![int_ty.clone()], Box::new(void_ty))});
+    builtins.insert("print_int", Ty { nullable: false, kind: TyKind::Fun(vec![int_ty.clone()], Box::new(void_ty.clone()))});
+    builtins.insert("print_bool", Ty { nullable: false, kind: TyKind::Fun(vec![bool_ty.clone()], Box::new(void_ty))});
     builtins.insert("array_of_string", Ty { nullable: false, kind: TyKind::Fun(vec![string_type.clone()], Box::new(int_array_type.clone()))});
     builtins.insert("string_of_array", Ty { nullable: false, kind: TyKind::Fun(vec![int_array_type], Box::new(string_type.clone()))});
     builtins.insert("string_of_int", Ty { nullable: false, kind: TyKind::Fun(vec![int_ty.clone()], Box::new(string_type.clone()))});
