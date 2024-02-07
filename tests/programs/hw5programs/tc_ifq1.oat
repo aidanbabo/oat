@@ -1,3 +1,5 @@
+/*category tc_ok */
+/*typecheck pass */
 int sum(int[]? arr) {
     var acc = 0;
     if? (int[] a = arr) {

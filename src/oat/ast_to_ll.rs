@@ -5,36 +5,43 @@ use super::typechecker;
 use super::ast as oast;
 use crate::llvm::ast as llast;
 
+#[derive(Debug, Default, PartialEq)]
+struct PartialBlock {
+    label: Option<llast::Uid>, 
+    insns: Vec<(llast::Uid, llast::Insn)>, 
+    term: Option<(llast::Uid, llast::Terminator)>,
+}
+
 struct FunContext {
     locals: Vec<HashMap<oast::Ident, (llast::Uid, llast::Ty)>>,
     cfg: llast::Cfg,
-    current: (Option<llast::Uid>, Vec<(llast::Uid, llast::Insn)>, Option<(llast::Uid, llast::Terminator)>),
+    current: PartialBlock,
     ret_ty: llast::Ty,
 }
 
 impl FunContext {
     pub fn start_block(&mut self, name: llast::Uid) {
-        self.current.0 = Some(name);
+        self.current.label = Some(name);
     }
 
     pub fn push_insn(&mut self, uid: llast::Uid, insn: llast::Insn) {
-        if self.current.0.is_none() {
+        if self.current.label.is_none() {
             panic!("inserting into block with no name")
         }
-        self.current.1.push((uid, insn));
+        self.current.insns.push((uid, insn));
     }
 
     pub fn terminate(&mut self, uid: llast::Uid, term: llast::Terminator) {
-        if let Some(term) = self.current.2.replace((uid, term)) {
+        if let Some(term) = self.current.term.replace((uid, term)) {
             panic!("block already terminated with {term:?}");
         }
-        let (name, insns, term) = std::mem::take(&mut self.current);
+        let PartialBlock { label, insns, term } = std::mem::take(&mut self.current);
         let block = llast::Block {
             insns,
             term: term.unwrap(),
         };
 
-        self.cfg.blocks.push((name.expect("block given name"), block));
+        self.cfg.blocks.push((label.expect("block given name"), block));
     }
 
     pub fn push_scope(&mut self) {
@@ -213,19 +220,12 @@ impl Context {
 
         fun_ctx.start_block(post_entry_lbl);
 
-        self.block(&mut fun_ctx, func.body);
+        let returns = self.block(&mut fun_ctx, func.body);
         fun_ctx.pop_scope();
+
+        assert!(returns, "proved by typechecker");
         assert_eq!(fun_ctx.locals.len(), 0);
-
-        // todo: temp fix
-        fun_ctx.cfg.blocks.retain(|(lbl, _)| !lbl.starts_with("__unreachable"));
-
-        /*
-        crappy codegen prevents me from doing this
-        assert_eq!(fun_ctx.current.0, None);
-        assert_eq!(fun_ctx.current.1, vec![]);
-        assert_eq!(fun_ctx.current.2, None);
-        */
+        assert_eq!(fun_ctx.current, Default::default());
 
         let fdecl = llast::Fdecl {
             ty: fun_ty,
@@ -236,13 +236,18 @@ impl Context {
         self.llprog.fdecls.push((func.name, fdecl));
     }
 
-    fn block(&mut self, fun_ctx: &mut FunContext, body: oast::Block) {
-        for stmt in body {
-            self.stmt(fun_ctx, stmt.t);
+    fn block(&mut self, fun_ctx: &mut FunContext, body: oast::Block) -> bool {
+        let nstatements = body.len();
+        for (i, stmt) in body.into_iter().enumerate() {
+            if self.stmt(fun_ctx, stmt.t) {
+                assert_eq!(i + 1, nstatements);
+                return true;
+            }
         }
+        false
     }
 
-    fn stmt(&mut self, fun_ctx: &mut FunContext, stmt: oast::Stmt) {
+    fn stmt(&mut self, fun_ctx: &mut FunContext, stmt: oast::Stmt) -> bool {
         match stmt {
             oast::Stmt::Assn(lhs, rhs) => {
                 // todo: evaluation order?
@@ -250,21 +255,22 @@ impl Context {
                 let (lhs_ptr_op, pointee_ty) = self.lhs(fun_ctx, lhs.t);
                 debug_assert_eq!(ty, pointee_ty);
                 fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), rhs_op, lhs_ptr_op));
+                false
             },
             oast::Stmt::Decl(d) => {
                 self.vdecl(fun_ctx, d);
+                false
             },
             oast::Stmt::Ret(v) => {
                 let ret_op = v.map(|v| self.exp(fun_ctx, v.t).0);
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Ret(fun_ctx.ret_ty.clone(), ret_op));
-                // todo: bad codegen :(
-                fun_ctx.start_block(self.gensym("_unreachable"));
+                true
             },
             oast::Stmt::Call(f, args) => {
                 let uid = self.gensym("_");
                 self.call(fun_ctx, f.t, args, uid);
+                false
             }
-            // todo: concept of definitely returns to remove unneeded labels
             oast::Stmt::If(cnd, if_blk, else_blk) => {
                 let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
                 let then_lbl = self.gensym("then");
@@ -274,17 +280,25 @@ impl Context {
 
                 fun_ctx.push_scope();
                 fun_ctx.start_block(then_lbl.clone());
-                self.block(fun_ctx, if_blk);
-                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                let if_returns = self.block(fun_ctx, if_blk);
+                if !if_returns {
+                    fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                }
                 fun_ctx.pop_scope();
 
                 fun_ctx.push_scope();
                 fun_ctx.start_block(else_lbl.clone());
-                self.block(fun_ctx, else_blk);
-                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                let else_returns = self.block(fun_ctx, else_blk);
+                if !else_returns {
+                    fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(after_lbl.clone()));
+                }
                 fun_ctx.pop_scope();
 
-                fun_ctx.start_block(after_lbl.clone());
+                if !if_returns || !else_returns {
+                    fun_ctx.start_block(after_lbl.clone());
+                }
+
+                if_returns && else_returns
             }
             oast::Stmt::IfNull(_, _, _, _, _) => todo!(),
             oast::Stmt::For(vdecls, cnd, update, blk) => {
@@ -321,6 +335,8 @@ impl Context {
                 fun_ctx.pop_scope();
 
                 fun_ctx.start_block(for_after_lbl.clone());
+
+                false
             }
             oast::Stmt::While(cnd, blk) => {
                 let while_top_lbl = self.gensym("while_top");
@@ -339,6 +355,8 @@ impl Context {
                 fun_ctx.pop_scope();
 
                 fun_ctx.start_block(while_after_lbl.clone());
+
+                false
             }
         }
     }

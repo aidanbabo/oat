@@ -96,7 +96,7 @@ fn get_rule(kind: TokenKind) -> ParseRule {
             TokenKind::Null => ParseRule::new(Precedence::None, None, None),
             TokenKind::String => ParseRule::new(Precedence::None, Some(Parser::parse_string_lit), None),
             TokenKind::Ident => ParseRule::new(Precedence::None, Some(Parser::parse_ident), None),
-            TokenKind::UIdent => ParseRule::new(Precedence::None, None, None),
+            TokenKind::UIdent => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
             TokenKind::TInt => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
             TokenKind::TVoid => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
             TokenKind::TString => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
@@ -521,7 +521,7 @@ impl Parser {
         let length_loc = self.consume().unwrap().loc;
         self.assert_next_is(TokenKind::LParen)?;
         let e = self.parse_exp()?;
-        let rparen = self.assert_next_is(TokenKind::LParen)?;
+        let rparen = self.assert_next_is(TokenKind::RParen)?;
         let loc = Range::merge(length_loc, rparen.loc);
         Ok(Node { loc, t: ast::Exp::Length(Box::new(e)) })
     }
@@ -718,6 +718,7 @@ impl Parser {
         if !ty.kind.is_ref() {
             panic!("expected a reference type, these are strings, arrays, classes, and functions");
         }
+        // todo: disallow null?
         Ok(ty)
     }
 

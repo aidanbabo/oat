@@ -164,7 +164,7 @@ def run_test(test: Test) -> TestResult:
                 return TestResult.PASSED
             elif proc.returncode == 101: # rust panic returncode
                 eprint('FAILED\ncompiler panic')
-                eprint(proc.stderr)
+                eprint(proc.stderr.decode('utf8') if proc.stderr else '')
                 return TestResult.FAILED
             elif proc.returncode != 0 and test.typecheck == 'fail':
                 eprint('PASS')
@@ -266,7 +266,7 @@ def main():
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
     hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student', 'tc_hw4']
-    hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement', 'tc_expression', 'tc_struct', 'tc_global', 'tc_other']
+    hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement', 'tc_expression', 'tc_struct', 'tc_global', 'tc_other', 'tc_ok', 'tc_err']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', nargs='?')

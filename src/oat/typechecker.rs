@@ -353,8 +353,9 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
             if !e_ty.nullable {
                 return Err(TypeError("if? expression type must be a nullable type".to_string()));
             }
-            if !subtype(&e_ty, ty, ctx) {
-                return Err(TypeError("if? expression type must be a subtype of the declared type".to_string()));
+            let denulled_e_ty = Ty { nullable: false, kind: e_ty.kind };
+            if !subtype(&denulled_e_ty, ty, ctx) {
+                return Err(TypeError(format!("if? expression type must be a subtype of the declared type. {denulled_e_ty} needs to coerce to {ty}")));
             }
 
             let mut if_locals = locals.clone();
