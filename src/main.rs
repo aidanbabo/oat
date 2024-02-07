@@ -101,12 +101,15 @@ fn main() {
         } else if ext == "ll" {
             // todo: runtime support for ll files (tests)
         }
-        cmd
+        let run = cmd
             .arg("-Wno-override-module")
             .spawn()
             .unwrap()
             .wait()
             .unwrap();
+        if !run.success() {
+            std::process::exit(1);
+        }
     }
 }
 

@@ -441,7 +441,7 @@ impl Context {
 
                 // allocate array
                 let (len_op, _) = self.exp(fun_ctx, len.t);
-                let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, tipe(ty), len_op.clone());
+                let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, tipe(ty), len_op.clone());
 
                 let init_top_lbl = self.gensym("init_top");
                 let init_body_lbl = self.gensym("init_body");
@@ -466,7 +466,10 @@ impl Context {
                 // init exp
                 fun_ctx.start_block(init_body_lbl.clone());
                 fun_ctx.locals.insert(name, (ix_alloca_uid, llast::Ty::I64));
-                self.exp(fun_ctx, init.t);
+                let (e_op, e_ty) = self.exp(fun_ctx, init.t);
+                let gep_uid = self.gensym("_init_assn");
+                fun_ctx.push_insn(gep_uid.clone(), llast::Insn::Gep(array_base_ty, array_op.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(1), ix_load_op.clone()]));
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(e_ty, e_op, llast::Operand::Id(gep_uid)));
 
                 // update
                 let update_uid = self.gensym("_init_ix_update");
