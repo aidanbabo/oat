@@ -1,3 +1,5 @@
+/*category fptr */
+/*exitcode 2 */
 global plus = add;
 
 int add(int x, int y) {

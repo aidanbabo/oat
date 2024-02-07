@@ -1,3 +1,5 @@
+/*category fptr */
+/*exitcode 4 */
 void inc_first(int[] x) {
   x[0] = x[0] + 1;
   return;

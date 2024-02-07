@@ -1,3 +1,5 @@
+/*category fptr */
+/*exitcode 4 */
 int call((int) -> int f, int arg) {
   return f(arg);
 }

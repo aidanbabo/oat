@@ -1,3 +1,5 @@
+/*category new */
+/*exitcode 5 */
 int program (int argc, string[] argv) {
   var x = int[] null;
   var z = 0;

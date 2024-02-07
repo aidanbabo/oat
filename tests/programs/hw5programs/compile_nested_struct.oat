@@ -1,3 +1,5 @@
+/*category struct */
+/*exitcode 10 */
 struct RGB {
   int red;
   int green;

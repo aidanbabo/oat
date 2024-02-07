@@ -1,3 +1,5 @@
+/*category new */
+/*exitcode 4 */
 struct S { int x; int y }
 
 int sum(S? s) {

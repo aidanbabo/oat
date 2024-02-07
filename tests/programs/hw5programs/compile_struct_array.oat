@@ -1,3 +1,5 @@
+/*category struct */
+/*exitcode 15 */
 struct Test {
   int[] xs;
   int y;

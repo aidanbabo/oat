@@ -1,3 +1,5 @@
+/*category struct */
+/*exitcode 0 */
 struct Pair {
   bool x;
   bool y

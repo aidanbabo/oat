@@ -1,3 +1,5 @@
+/*category struct */
+/*exitcode 7 */
 struct S {
   int s;
   int t;

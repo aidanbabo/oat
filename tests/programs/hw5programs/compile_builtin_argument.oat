@@ -1,3 +1,6 @@
+/*category fptr */
+/*exitcode 0 */
+/*prints abab */
 void run2((string) -> void f, string arg) {
   f(arg);
   f(arg);

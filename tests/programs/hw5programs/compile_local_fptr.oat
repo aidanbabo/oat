@@ -1,3 +1,5 @@
+/*category fptr */
+/*exitcode 5 */
 int add(int x, int y) {
   return x + y;
 }

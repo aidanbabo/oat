@@ -1,3 +1,5 @@
+/*category new */
+/*exitcode 4 */
 struct T { int x }
 struct S { int x; int y }
 

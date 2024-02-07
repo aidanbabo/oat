@@ -1,3 +1,6 @@
+/*category struct */
+/*exitcode 235 */
+/*prints hello */
 struct Test {
   int i;
   bool b;

@@ -1,3 +1,5 @@
+/*category new */
+/*exitcode 6 */
 int sum(int[]? arr) {
     var z = 0;
     if?(int[] a = arr) {

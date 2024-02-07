@@ -1,3 +1,5 @@
+/*category struct */
+/*exitcode 16 */
 struct Point {
   int x;
   int y

@@ -1,3 +1,5 @@
+/*category fptr */
+/*exitcode 20 */
 struct Color {
   int red;
   int green;

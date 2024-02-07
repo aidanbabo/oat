@@ -1,3 +1,5 @@
+/*category new */
+/*exitcode 4 */
 int program (int argc, string[] argv) {
   var x = int[] null;
   x = new int[3]{i -> 0};

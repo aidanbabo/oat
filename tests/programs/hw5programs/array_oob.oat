@@ -1,3 +1,6 @@
+/*category new */
+/*exitcode 1 */
+/*prints 000Out of bounds index 3 for array length 3 */
 int program(int arc, string[] args) {
   var arr = new int[3];
   print_int(arr[0]);

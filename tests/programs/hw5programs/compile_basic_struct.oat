@@ -1,3 +1,5 @@
+/*category struct */
+/*exitcode 7 */
 struct Color {
   int red;
   int green;

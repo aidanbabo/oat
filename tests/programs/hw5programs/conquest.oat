@@ -1,3 +1,6 @@
+/*category new */
+/*exitcode 11 */
+/*prints "My name is Jeff...\nCharizard is the BEST Pokemon ever!!!" */
 global meaning_of_life = 42;
 global kesha_to_fling = true;
 global professor = "Zdancewic!";

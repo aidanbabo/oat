@@ -1,3 +1,5 @@
+/*category fptr */
+/*exitcode 1 */
 int id(int x) { return x; }
 
 int program(int argc, string[] argv) {
