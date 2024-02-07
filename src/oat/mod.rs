@@ -71,12 +71,13 @@ pub fn parse(input: &str) -> Result<ast::Prog, Box<dyn std::error::Error>> {
     Ok(prog)
 }
 
-pub fn typecheck(prog: &ast::Prog) -> Result<(), typechecker::TypeError> {
+pub fn typecheck(prog: &ast::Prog) -> Result<typechecker::Context, typechecker::TypeError> {
     typechecker::check(prog)
 }
 
-pub fn to_llvm(oprog: ast::Prog) -> llvm::ast::Prog {
-    let context = ast_to_ll::Context::new();
+// doesn't really need owndership of tcx, but lifetimes are a pain
+pub fn to_llvm(oprog: ast::Prog, tcx: typechecker::Context) -> llvm::ast::Prog {
+    let context = ast_to_ll::Context::new(tcx);
 
     context.lower(oprog)
 }

@@ -50,10 +50,11 @@ pub struct Context {
     llprog: llast::Prog,
     globals: HashMap<oast::Ident, (llast::Gid, llast::Ty)>,
     sym_num: usize,
+    tctx: typechecker::Context,
 }
 
 impl Context {
-    pub fn new() -> Self {
+    pub fn new(tctx: typechecker::Context) -> Self {
         let mut ctx = Context {
             llprog: llast::Prog {
                 tdecls: Default::default(),
@@ -63,14 +64,16 @@ impl Context {
             },
             globals: Default::default(),
             sym_num: 0,
+            tctx,
         };
 
         ctx.llprog.edecls.push(("oat_assert_array_length".to_string(), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push(("oat_alloc_array".to_string(), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
         for (name, ty) in typechecker::BUILTINS.iter() {
             let ty = tipe(ty.clone());
-            ctx.llprog.edecls.push((name.to_string(), ty.clone()));
-            ctx.globals.insert(name.to_string(), (name.to_string(), ty));
+            let llast::Ty::Ptr(ty) = ty else { unreachable!() };
+            ctx.llprog.edecls.push((name.to_string(), (*ty).clone()));
+            ctx.globals.insert(name.to_string(), (name.to_string(), *ty));
         }
         
         ctx
@@ -114,7 +117,12 @@ impl Context {
             oast::Exp::Str(s) => self.global_string(name, s),
             oast::Exp::Id(id) => {
                 let (_name, ty) = self.globals.get(&id).expect("global id");
-                (ty.clone(), llast::Ginit::Gid(id))
+                let ty = if let llast::Ty::Fun(..) = ty {
+                    llast::Ty::Ptr(Box::new(ty.clone()))
+                } else {
+                    ty.clone()
+                };
+                (ty, llast::Ginit::Gid(id))
             }
             oast::Exp::ArrElems(ty, els) => {
                 let els: Vec<_> = els.into_iter().enumerate().map(|(i, e)| self.gexp(e.t, format!("{name}{i}"))).collect();
@@ -156,14 +164,9 @@ impl Context {
     fn add_function_to_globals(&mut self, func: &oast::Fdecl) {
         let ret_ty = tipe(func.ret_ty.clone());
         let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (tipe(t), n)).unzip();
-        let fun_ty = llast::FunTy {
-            params: arg_tys,
-            ret: ret_ty,
-        };
 
-        let ty_fun = llast::Ty::Fun(fun_ty.params.clone(), Box::new(fun_ty.ret.clone()));
+        let ty_fun = llast::Ty::Fun(arg_tys, Box::new(ret_ty));
         assert!(self.globals.insert(func.name.clone(), (func.name.clone(), ty_fun)).is_none());
-
     }
 
     fn function(&mut self, func: oast::Fdecl) {
@@ -560,6 +563,6 @@ fn tipe(ot: oast::Ty) -> llast::Ty {
         TK::String => Lty::Ptr(Box::new(Lty::I8)),
         TK::Struct(_) => todo!(),
         TK::Array(t) => Lty::Ptr(Box::new(Lty::Struct(vec![Lty::I64, Lty::Array(0, Box::new(tipe(*t)))]))),
-        TK::Fun(args, ret) => Lty::Fun(args.into_iter().map(tipe).collect(), Box::new(tipe(*ret))),
+        TK::Fun(args, ret) => Lty::Ptr(Box::new(Lty::Fun(args.into_iter().map(tipe).collect(), Box::new(tipe(*ret))))),
     }
 }

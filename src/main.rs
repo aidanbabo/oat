@@ -42,16 +42,19 @@ fn main() {
             oat::oat::print(&prog);
         }
 
-        if let Err(e) = oat::oat::typecheck(&prog) {
-            eprintln!("{e:?}");
-            process::exit(1);
-        }
+        let tctx = match oat::oat::typecheck(&prog) {
+            Ok(tctx) => tctx,
+            Err(e) => {
+                eprintln!("{e:?}");
+                process::exit(1);
+            }
+        };
 
         if args.check {
             return;
         }
 
-        oat::oat::to_llvm(prog)
+        oat::oat::to_llvm(prog, tctx)
     } else if ext == "ll" {
         let s = fs::read_to_string(&args.path).unwrap();
         match oat::llvm::parse(&s) {

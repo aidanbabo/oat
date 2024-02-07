@@ -7,10 +7,10 @@ use super::Node;
 #[derive(Debug)]
 pub struct TypeError(String);
 
-struct Context {
-    structs: HashMap<Ident, Vec<(Ty, Ident)>>,
-    vars: HashMap<Ident, Ty>,
-    funcs: HashMap<Ident, Ty>,
+pub struct Context {
+    pub structs: HashMap<Ident, Vec<(Ty, Ident)>>,
+    pub vars: HashMap<Ident, Ty>,
+    pub funcs: HashMap<Ident, Ty>,
 }
 
 pub static BUILTINS: Lazy<HashMap<&str, Ty>> = Lazy::new(|| {
@@ -113,7 +113,24 @@ fn gexp(e: &Exp, ctx: &Context) -> Result<Ty, TypeError> {
             }
             Ty { nullable: false, kind: TyKind::Array(Box::new(t.clone())) }
         },
-        Exp::Struct(..) => todo!(),
+        Exp::Struct(name, inits) => {
+            let fields = ctx.structs.get(name).ok_or_else(|| TypeError(format!("unknown struct {name}")))?;
+            if fields.len() != inits.len() {
+                return Err(TypeError("wrong number of struct fields in struct initializer".to_string()));
+            }
+
+            for (expected_ty, name) in fields {
+                let (_, e) = inits.iter().find(|(n, _)| name == n).expect("missing field member");
+                let actual_ty = gexp(e, ctx)?;
+
+                if !subtype(&actual_ty, expected_ty, ctx) {
+                    return Err(TypeError(format!("wrong type in struct initializer. expected {expected_ty:?} but found {actual_ty:?}")));
+                }
+            }
+
+            Ty { nullable: false, kind: TyKind::Struct(name.clone()) }
+
+        }
         _ => unreachable!(),
     };
 
@@ -459,7 +476,7 @@ fn type_decl(t: &Tdecl) -> Result<Vec<(Ty, Ident)>, TypeError> {
     Ok(fields)
 }
 
-pub fn check(prog: &Prog) -> Result<(), TypeError> {
+pub fn check(prog: &Prog) -> Result<Context, TypeError> {
     let mut structs: HashMap<Ident, Vec<(Ty, Ident)>> = Default::default();
     let mut funcs: HashMap<Ident, Ty> = Default::default();
 
@@ -511,6 +528,6 @@ pub fn check(prog: &Prog) -> Result<(), TypeError> {
         }
     }
 
-    Ok(())
+    Ok(context)
 }
 
