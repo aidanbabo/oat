@@ -415,7 +415,48 @@ impl Context {
                 let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, tipe(ty), op);
                 (array_op, array_ty)
             }
-            oast::Exp::ArrInit(_, _, _, _) => todo!(),
+            oast::Exp::ArrInit(ty, len, name, init) => {
+                // todo: use phi nodes? might make code cleaner
+
+                // allocate array
+                let (len_op, _) = self.exp(fun_ctx, len.t);
+                let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, tipe(ty), len_op.clone());
+
+                let init_top_lbl = self.gensym("init_top");
+                let init_body_lbl = self.gensym("init_body");
+                let init_after_lbl = self.gensym("init_after");
+
+                // set up index var
+                let ix_alloca_uid = self.gensym("_init_ix_alloca");
+                fun_ctx.push_insn(ix_alloca_uid.clone(), llast::Insn::Alloca(llast::Ty::I64));
+                let ix_alloca_op = llast::Operand::Id(ix_alloca_uid.clone());
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(llast::Ty::I64, llast::Operand::Const(0), ix_alloca_op.clone()));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(init_top_lbl.clone()));
+
+                // exit condition
+                fun_ctx.start_block(init_top_lbl.clone());
+                let ix_load_uid = self.gensym("_init_ix_load");
+                fun_ctx.push_insn(ix_load_uid.clone(), llast::Insn::Load(llast::Ty::I64, ix_alloca_op.clone()));
+                let ix_load_op = llast::Operand::Id(ix_load_uid);
+                let cnd_uid = self.gensym("_init_ix_check");
+                fun_ctx.push_insn(cnd_uid.clone(), llast::Insn::Icmp(llast::Cnd::Slt, llast::Ty::I64, ix_load_op.clone(), len_op));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(llast::Operand::Id(cnd_uid), init_body_lbl.clone(), init_after_lbl.clone()));
+
+                // init exp
+                fun_ctx.start_block(init_body_lbl.clone());
+                fun_ctx.locals.insert(name, (ix_alloca_uid, llast::Ty::I64));
+                self.exp(fun_ctx, init.t);
+
+                // update
+                let update_uid = self.gensym("_init_ix_update");
+                fun_ctx.push_insn(update_uid.clone(), llast::Insn::Binop(llast::Bop::Add, llast::Ty::I64, ix_load_op, llast::Operand::Const(1)));
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(llast::Ty::I64, llast::Operand::Id(update_uid), ix_alloca_op));
+                fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(init_top_lbl.clone()));
+
+                fun_ctx.start_block(init_after_lbl.clone());
+
+                (array_op, array_ty)
+            }
             oast::Exp::Length(e) => {
                 let (array_op, array_ty) = self.exp(fun_ctx, e.t);
                 let llast::Ty::Ptr(array_base_ty) = array_ty else { unreachable!() };
