@@ -158,7 +158,15 @@ def run_test(test: Test) -> TestResult:
         return eval_interp_test(test, proc)
     else:
         if test.typecheck:
-            if proc.returncode == 0 and test.typecheck == 'pass' or proc.returncode != 0 and test.typecheck == 'fail':
+
+            if proc.returncode == 0 and test.typecheck == 'pass':
+                eprint('PASS')
+                return TestResult.PASSED
+            elif proc.returncode == 101: # rust panic returncode
+                eprint('FAILED\ncompiler panic')
+                eprint(proc.stderr)
+                return TestResult.FAILED
+            elif proc.returncode != 0 and test.typecheck == 'fail':
                 eprint('PASS')
                 return TestResult.PASSED
             elif proc.returncode == 0:
@@ -257,7 +265,7 @@ def main():
 if __name__ == '__main__':
     llvm_test_categories = ['binop', 'calling-convention', 'memory', 'terminator', 'bitcast', 'gep', 'arith', 'large', 'io', 'uncategorized']
     hw4_test_categories = ['easiest', 'globals', 'path', 'easy', 'medium', 'hard', 'student', 'tc_hw4']
-    hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement']
+    hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement', 'tc_expression', 'tc_struct']
 
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', nargs='?')

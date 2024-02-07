@@ -53,6 +53,7 @@ fn subtype(sub: &Ty, sup: &Ty, ctx: &Context) -> bool {
             if sub_name == sup_name {
                 return true;
             }
+            // todo: what to do here?
             let sub_fields = &ctx.structs[sub_name];
             let sup_fields = &ctx.structs[sup_name];
             if sub_fields.len() < sup_fields.len() {
@@ -195,7 +196,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
             Ty { nullable: false, kind: TyKind::Int }
         }
         Exp::Struct(name, inits) => {
-            let fields = &ctx.structs[name];
+            let fields = ctx.structs.get(name).ok_or_else(|| TypeError(format!("unknown struct {name}")))?;
             if fields.len() != inits.len() {
                 return Err(TypeError("wrong number of struct fields in struct initializer".to_string()));
             }
@@ -220,7 +221,9 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeEr
                 return Err(TypeError("cannot get field of possibly null struct. consider using a cast (if?) first".to_string()));
             }
             let fields = &ctx.structs[&name];
-            let (field_ty, _) = fields.iter().find(|(_, n)| n == field_name).unwrap();
+            let Some((field_ty, _)) = fields.iter().find(|(_, n)| n == field_name) else {
+                return Err(TypeError(format!("unknown field name {field_name}")));
+            };
             field_ty.clone()
         }
         Exp::Call(f, args) => call(f, args, locals, ctx)?,
@@ -387,6 +390,17 @@ fn function_body(f: &Fdecl, ctx: &Context) -> Result<(), TypeError> {
     Ok(())
 }
 
+fn type_decl_verify(t: &Tdecl, ctx: &Context) -> Result<(), TypeError> {
+    for field in &t.fields {
+        if let TyKind::Struct(s) = &field.ty.kind {
+            if !ctx.structs.contains_key(s) {
+                return Err(TypeError(format!("unknown struct {s} in struct field {} of struct {}", field.name, t.name)));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn global(g: &Gdecl, ctx: &Context) -> Result<(Ident, Ty), TypeError> {
     Ok((g.name.clone(), gexp(&g.init, ctx)?))
 }
@@ -402,15 +416,25 @@ fn function_header(f: &Fdecl) -> Result<(Ident, Ty), TypeError> {
     Ok((f.name.clone(), ty))
 }
 
+fn type_decl(t: &Tdecl) -> Result<Vec<(Ty, Ident)>, TypeError> {
+    let fields: Vec<_> = t.fields.iter().map(|f| (f.ty.clone(), f.name.clone())).collect();
+    let distinct_fields: HashSet<_> = t.fields.iter().map(|f| &f.name).collect();
+    if fields.len() != distinct_fields.len() {
+        return Err(TypeError("duplicate struct field".to_string()));
+    }
+    Ok(fields)
+}
+
 pub fn check(prog: &Prog) -> Result<(), TypeError> {
-    // todo: check for duplicates
     let mut globals: HashMap<Ident, Ty> = Default::default();
 
     let mut named_types: HashMap<Ident, Vec<(Ty, Ident)>> = Default::default();
     for decl in prog {
         if let Decl::Type(t) = decl {
-            let fields = t.fields.iter().map(|f| (f.ty.clone(), f.name.clone())).collect();
-            named_types.insert(t.name.clone(), fields);
+            let fields = type_decl(t)?;
+            if named_types.insert(t.name.clone(), fields).is_some() {
+                return Err(TypeError(format!("a struct with name {} already exists", t.name)));
+            }
         }
     }
 
@@ -438,9 +462,10 @@ pub fn check(prog: &Prog) -> Result<(), TypeError> {
     }
 
     for decl in prog {
-        // todo: struct field well formedness?
-        if let Decl::Fun(f) = decl {
-            function_body(f, &context)?;
+        match decl { 
+            Decl::Fun(f) => function_body(f, &context)?,
+            Decl::Type(t) => type_decl_verify(t, &context)?,
+            _ => {},
         }
     }
 
