@@ -29,7 +29,7 @@ fn main() {
         process::exit(1);
     };
 
-    let mut ll_arena = Arena::new();
+    let ll_arena = Arena::new();
 
     let ll_prog = if ext == "oat" {
         let s = fs::read_to_string(&args.path).unwrap();
@@ -57,10 +57,10 @@ fn main() {
             return;
         }
 
-        oat::oat::to_llvm(prog, tctx, &mut ll_arena)
+        oat::oat::to_llvm(prog, tctx, &ll_arena)
     } else if ext == "ll" {
         let s = fs::read_to_string(&args.path).unwrap();
-        match oat::llvm::parse(&s) {
+        match oat::llvm::parse(&s, &ll_arena) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e}");

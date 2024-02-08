@@ -1,3 +1,4 @@
+use internment::{Arena, ArenaIntern};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
@@ -34,7 +35,7 @@ pub fn escape_string(s: &str) -> String {
 // fixme: global state! ugh!
 static ID_COUNT: Lazy<Mutex<i64>> = Lazy::new(|| Mutex::new(0));
 
-pub fn gensym(s: &str) -> String {
+pub fn gensym<'ast>(arena: &'ast Arena<str>, s: &'static str) -> ArenaIntern<'ast, str> {
     *ID_COUNT.lock().unwrap() += 1;
-    format!("_{s}__{}", *ID_COUNT.lock().unwrap())
+    arena.intern_string(format!("_{s}__{}", *ID_COUNT.lock().unwrap()))
 }

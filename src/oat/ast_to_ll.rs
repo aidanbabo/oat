@@ -54,11 +54,11 @@ pub struct Context<'ll> {
     globals: HashMap<oast::Ident, (llast::Gid<'ll>, llast::Ty<'ll>)>,
     structs: HashMap<oast::Ident, Vec<(llast::Ty<'ll>, oast::Ident)>>,
     sym_num: usize,
-    arena: &'ll mut Arena<str>,
+    arena: &'ll Arena<str>,
 }
 
 impl<'ll> Context<'ll> {
-    pub fn new(tctx: typechecker::Context, arena: &mut Arena<str>) -> Self {
+    pub fn new(tctx: typechecker::Context, arena: &'ll Arena<str>) -> Self {
         let mut ctx = Context {
             llprog: llast::Prog {
                 tdecls: Default::default(),
@@ -131,13 +131,13 @@ impl<'ll> Context<'ll> {
         self.arena.intern_string(s)
     }
 
-    fn make_global(&mut self, name: String, ty: llast::Ty, init: llast::Ginit) {
+    fn make_global(&mut self, name: String, ty: llast::Ty<'ll>, init: llast::Ginit<'ll>) {
         let interned = self.arena.intern(&name);
         self.llprog.gdecls.push((interned, (ty.clone(), init)));
         assert!(self.globals.insert(name, (interned, ty)).is_none());
     }
 
-    fn gexp(&mut self, exp: oast::Exp, name: String) -> (llast::Ty, llast::Ginit) {
+    fn gexp(&mut self, exp: oast::Exp, name: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
         let (ty, op) = match exp {
             oast::Exp::Null(t) => (self.tipe(t), llast::Ginit::Null),
             oast::Exp::Bool(b) => (llast::Ty::I1, llast::Ginit::Int(b as i64)),
@@ -168,7 +168,8 @@ impl<'ll> Context<'ll> {
             }
             oast::Exp::Struct(struct_name, mut inits) => {
                 let fields = self.structs[&struct_name].clone();
-                let struct_ty = llast::Ty::Named(self.arena.intern_string(struct_name));
+                let struct_name = self.arena.intern_string(struct_name);
+                let struct_ty = llast::Ty::Named(struct_name);
                 let ginits = fields.iter().map(|(ty, name)| {
                     let found_ix = inits.iter().position(|(n, _)| n == name).expect("ensured by typechecker");
                     let (_, exp) = inits.remove(found_ix);
@@ -193,7 +194,7 @@ impl<'ll> Context<'ll> {
         assert!(self.globals.insert(v.name.clone(), (interned, ty)).is_none());
     }
 
-    fn global_string(&mut self, name: &str, mut s: String) -> (llast::Ty, llast::Ginit) {
+    fn global_string(&mut self, name: &str, mut s: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
         s.push('\0');
         let temp = self.gensym(&format!("{name}_tmp"));
         let array_ty = llast::Ty::Array(s.len() as i64, Box::new(llast::Ty::I8));
@@ -210,7 +211,7 @@ impl<'ll> Context<'ll> {
         let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (self.tipe(t), n)).unzip();
 
         let ty_fun = llast::Ty::Fun(arg_tys, Box::new(ret_ty));
-        assert!(self.globals.insert(func.name.clone(), (self.arena.intern_string(func.name), ty_fun)).is_none());
+        assert!(self.globals.insert(func.name.clone(), (self.arena.intern(&func.name), ty_fun)).is_none());
     }
 
     fn function(&mut self, func: oast::Fdecl) {
@@ -259,7 +260,7 @@ impl<'ll> Context<'ll> {
         self.llprog.fdecls.push((self.arena.intern_string(func.name), fdecl));
     }
 
-    fn block(&mut self, fun_ctx: &mut FunContext, body: oast::Block) -> bool {
+    fn block(&mut self, fun_ctx: &mut FunContext<'ll>, body: oast::Block) -> bool {
         let nstatements = body.len();
         for (i, stmt) in body.into_iter().enumerate() {
             if self.stmt(fun_ctx, stmt.t) {
@@ -270,7 +271,7 @@ impl<'ll> Context<'ll> {
         false
     }
 
-    fn typecast(&mut self, fun_ctx: &mut FunContext, src: llast::Ty, op: llast::Operand, dst: llast::Ty) -> llast::Operand {
+    fn typecast(&mut self, fun_ctx: &mut FunContext<'ll>, src: llast::Ty<'ll>, op: llast::Operand<'ll>, dst: llast::Ty<'ll>) -> llast::Operand<'ll> {
         if src == dst {
             return op
         }
@@ -280,7 +281,7 @@ impl<'ll> Context<'ll> {
         llast::Operand::Id(bitcast)
     }
 
-    fn stmt(&mut self, fun_ctx: &mut FunContext, stmt: oast::Stmt) -> bool {
+    fn stmt(&mut self, fun_ctx: &mut FunContext<'ll>, stmt: oast::Stmt) -> bool {
         match stmt {
             oast::Stmt::Assn(lhs, rhs) => {
                 // todo: evaluation order?
@@ -429,7 +430,7 @@ impl<'ll> Context<'ll> {
         }
     }
 
-    fn vdecl(&mut self, fun_ctx: &mut FunContext, d: oast::Vdecl) {
+    fn vdecl(&mut self, fun_ctx: &mut FunContext<'ll>, d: oast::Vdecl) {
         let (exp_uid, ty) = self.exp(fun_ctx, d.exp.t);
         let alloca = llast::Insn::Alloca(ty.clone());
         let alloca_uid = self.gensym(&d.name);
@@ -438,7 +439,7 @@ impl<'ll> Context<'ll> {
         fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), exp_uid, llast::Operand::Id(alloca_uid)));
     }
 
-    fn exp(&mut self, fun_ctx: &mut FunContext, exp: oast::Exp) -> (llast::Operand, llast::Ty) {
+    fn exp(&mut self, fun_ctx: &mut FunContext<'ll>, exp: oast::Exp) -> (llast::Operand<'ll>, llast::Ty<'ll>) {
         let (op, ty): (llast::Operand, llast::Ty) = match exp {
             oast::Exp::Null(t) => (llast::Operand::Null, self.tipe(t)),
             oast::Exp::Bool(b) => (llast::Operand::Const(b as i64), llast::Ty::I1),
@@ -472,7 +473,8 @@ impl<'ll> Context<'ll> {
             }
             oast::Exp::ArrLen(ty, len) => {
                 let (op, _) = self.exp(fun_ctx, len.t);
-                let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, self.tipe(ty), op);
+                let ty = self.tipe(ty);
+                let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, ty, op);
                 (array_op, array_ty)
             }
             oast::Exp::ArrInit(ty, len, name, init) => {
@@ -534,7 +536,8 @@ impl<'ll> Context<'ll> {
             }
             oast::Exp::Struct(struct_name, mut inits) => {
                 let fields = self.structs[&struct_name].clone();
-                let struct_base_ty = llast::Ty::Named(self.arena.intern_string(struct_name));
+                let struct_name = self.arena.intern_string(struct_name);
+                let struct_base_ty = llast::Ty::Named(struct_name);
                 let struct_ty = llast::Ty::Ptr(Box::new(struct_base_ty.clone()));
 
                 let struct_size_bytes = fields.len() * 8;
@@ -627,7 +630,7 @@ impl<'ll> Context<'ll> {
         (op, ty)
     }
 
-    fn oat_alloc_array(&mut self, fun_ctx: &mut FunContext, ty: llast::Ty, len: llast::Operand) -> (llast::Operand, llast::Ty, llast::Ty) {
+    fn oat_alloc_array(&mut self, fun_ctx: &mut FunContext<'ll>, ty: llast::Ty<'ll>, len: llast::Operand<'ll>) -> (llast::Operand<'ll>, llast::Ty<'ll>, llast::Ty<'ll>) {
         let (i64_ptr_op, i64_ptr_ty) = self.call_internal(fun_ctx, "oat_alloc_array", &[len]);
         let array_uid = self.gensym("array");
         let array_base_ty = array_maker(ty, 0);
@@ -637,7 +640,7 @@ impl<'ll> Context<'ll> {
         (llast::Operand::Id(array_uid), array_ty, array_base_ty)
     }
 
-    fn call(&mut self, fun_ctx: &mut FunContext, f: oast::Exp, args: Vec<Node<oast::Exp>>, uid: llast::Uid) -> (llast::Operand, llast::Ty) {
+    fn call(&mut self, fun_ctx: &mut FunContext<'ll>, f: oast::Exp, args: Vec<Node<oast::Exp>>, uid: llast::Uid<'ll>) -> (llast::Operand<'ll>, llast::Ty<'ll>) {
         let (fop, tf) = self.exp(fun_ctx, f);
         let llast::Ty::Ptr(p) = tf else { unreachable!() };
         let llast::Ty::Fun(arg_tys, ret_ty) = *p else { unreachable!() };
@@ -651,7 +654,7 @@ impl<'ll> Context<'ll> {
     }
 
     /// will always return the storage slot
-    fn lhs(&mut self, fun_ctx: &mut FunContext, lhs: oast::Exp) -> (llast::Operand, llast::Ty) {
+    fn lhs(&mut self, fun_ctx: &mut FunContext<'ll>, lhs: oast::Exp) -> (llast::Operand<'ll>, llast::Ty<'ll>) {
         match lhs {
             oast::Exp::Id(id) => {
                 if let Some((ptr_uid, ty)) = fun_ctx.locals.get(&id) {
@@ -699,7 +702,7 @@ impl<'ll> Context<'ll> {
         }
     }
 
-    fn call_internal(&mut self, fun_ctx: &mut FunContext, name: &'static str, args: &[llast::Operand]) -> (llast::Operand, llast::Ty) {
+    fn call_internal(&mut self, fun_ctx: &mut FunContext<'ll>, name: &'static str, args: &[llast::Operand<'ll>]) -> (llast::Operand<'ll>, llast::Ty<'ll>) {
         let name = self.arena.intern(name);
         let ret = self.gensym("ret");
         let (_, ty) = self.llprog.edecls.iter().find(|(n, _)| *n == name).expect("unknown builtin");

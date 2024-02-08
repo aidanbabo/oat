@@ -1,8 +1,9 @@
+use internment::{Arena, ArenaIntern};
 use std::str::FromStr;
 use crate::llvm::ast;
 use crate::llvm::parser_utils::{append, escape_string, gensym};
 
-grammar;
+grammar<'ast>(arena: &'ast Arena<str>);
 
 match {
 	// eof => EOF,
@@ -63,12 +64,12 @@ match {
 	r"\d+" => INT,
 	r";([^\n\r])*\n" => {}, // comments
 } else {
-	r"[A-Za-z\d_][A-Za-z\d_\.]*" => LBL,
+	r"[A-Za-z\d_][A-Za-z\d_\.]*" => LBL_RAW,
 }
 
-pub Prog: ast::Prog = <Decls>;
+pub Prog: ast::Prog<'ast> = <Decls>;
 
-Decls: ast::Prog = {
+Decls: ast::Prog<'ast> = {
 	() => ast::Prog { 
 		tdecls: Default::default(),
 		gdecls: Default::default(),
@@ -93,7 +94,7 @@ Decls: ast::Prog = {
 	},
 };
 
-Fdecl: (ast::Gid, ast::Fdecl) = {
+Fdecl: (ast::Gid<'ast>, ast::Fdecl<'ast>) = {
 	DEFINE <t:Ty> <l:GID> LPAREN <a:ArgList> RPAREN
 	LBRACE <eb:EntryBlock> <bs:BlockList> RBRACE => {
 		let (ptys, pnames) = a.into_iter().unzip();
@@ -108,20 +109,20 @@ Fdecl: (ast::Gid, ast::Fdecl) = {
 	}
 };
 
-Gdecl: (ast::Gid, ast::Gdecl) = {
+Gdecl: (ast::Gid<'ast>, ast::Gdecl<'ast>) = {
 	<g:GID> EQUALS GLOBAL <t:Ty> <gi:Ginit> => (g, (t, gi)),
 };
 
-Tdecl: (ast::Tid, ast::Ty) = {
+Tdecl: (ast::Tid<'ast>, ast::Ty<'ast>) = {
 	<tid:UID> EQUALS TYPE <t:Ty> => (tid, t),
 };
 
-Edecl: (ast::Gid, ast::Ty) = {
+Edecl: (ast::Gid<'ast>, ast::Ty<'ast>) = {
 	DECLARE <rt:Ty> <g:GID> LPAREN <ts:Comma<Ty>> RPAREN => (g, ast::Ty::Fun(ts, Box::new(rt))),
 	<g:GID> EQUALS EXTERNAL GLOBAL <t:Ty> => (g, t),
 };
 
-NonPtrTy: ast::Ty = {
+NonPtrTy: ast::Ty<'ast> = {
 	VOID => ast::Ty::Void,
 	I1 => ast::Ty::I1,
 	I8 => ast::Ty::I8,
@@ -132,40 +133,41 @@ NonPtrTy: ast::Ty = {
 	<t:UID> => ast::Ty::Named(t),
 };
 
-Ty: ast::Ty = {
+Ty: ast::Ty<'ast> = {
 	<t:Ty> STAR => ast::Ty::Ptr(Box::new(t)),
 	NonPtrTy => <>,
 };
 
-TyList: Vec<ast::Ty> = {
+TyList: Vec<ast::Ty<'ast>> = {
 	Ty => vec![<>],
 	<ts:TyList> COMMA <t:Ty> => append(ts, t),
 };
 
-Arg: (ast::Ty, ast::Uid) = {
-	Ty UID => (<>),
+Arg: (ast::Ty<'ast>, ast::Uid<'ast>) = {
+	<t:Ty> <u:UID> => (t, u),
 };
 
-ArgList: Vec<(ast::Ty, ast::Uid)> = {
+// hereherhehrherh
+ArgList: Vec<(ast::Ty<'ast>, ast::Uid<'ast>)> = {
 	() => vec![],
 	Arg => vec![<>],
 	<args:ArgList> COMMA <a:Arg> => append(args, a),
 };
 
-Operand: ast::Operand = {
+Operand: ast::Operand<'ast> = {
 	NULL => ast::Operand::Null,
 	INT => ast::Operand::Const(i64::from_str(<>).unwrap()),
 	GID => ast::Operand::Gid(<>),
 	UID => ast::Operand::Id(<>),
 };
 
-TyOperandList: Vec<(ast::Ty, ast::Operand)> = {
+TyOperandList: Vec<(ast::Ty<'ast>, ast::Operand<'ast>)> = {
 	() => vec![],
 	Ty Operand => vec![(<>)],
 	<tos:TyOperandList> COMMA <t:Ty> <o:Operand> => append(tos, (t, o)),
 };
 
-IOperandList: Vec<ast::Operand> = {
+IOperandList: Vec<ast::Operand<'ast>> = {
 	() => vec![],
 	I64 <Operand> => vec![<>],
 	I32 <Operand> => vec![<>],
@@ -173,26 +175,26 @@ IOperandList: Vec<ast::Operand> = {
 	<os:IOperandList> COMMA I32 <o:Operand> => append(os, o),
 };
 
-Terminator: ast::Terminator = {
+Terminator: ast::Terminator<'ast> = {
 	RET <t:Ty> <o:Operand> => ast::Terminator::Ret(t, Some(o)),
 	RET <t:Ty> => ast::Terminator::Ret(t, None),
 	BR LABEL <l:UID> => ast::Terminator::Br(l),
 	BR I1 <o:Operand> COMMA LABEL <l1:UID> COMMA LABEL <l2:UID> => ast::Terminator::Cbr(o, l1, l2),
 };
 
-Block: ast::Block = {
+Block: ast::Block<'ast> = {
 	<is:InsnList> <t:Terminator> => ast::Block {
 		insns: is,
-		term: (gensym("tmn"), t),
+		term: (gensym(arena, "tmn"), t),
 	},
 }
 
-BlockList: Vec<(ast::Lbl, ast::Block)> = {
+BlockList: Vec<(ast::Lbl<'ast>, ast::Block<'ast>)> = {
 	() => vec![],
-	<bs:BlockList> <l:LBL> COLON <b:Block> => append(bs, (l.to_string(), b)),
+	<bs:BlockList> <l:LBL> COLON <b:Block> => append(bs, (l, b)),
 };
 
-EntryBlock: ast::Block = {
+EntryBlock: ast::Block<'ast> = {
 	ENTRY COLON <Block> => <>,
 	Block => <>
 };
@@ -218,27 +220,27 @@ Cnd: ast::Cnd = {
 	SGE => ast::Cnd::Sge,
 };
 
-Insn: (ast::Uid, ast::Insn) = {
+Insn: (ast::Uid<'ast>, ast::Insn<'ast>) = {
 	<u:UID> EQUALS <b:Bop> <t:Ty> <o1:Operand> COMMA <o2:Operand> => (u, ast::Insn::Binop(b, t, o1, o2)),
 	<u:UID> EQUALS ALLOCA <t:Ty> => (u, ast::Insn::Alloca(t)),
 	<u:UID> EQUALS LOAD <t:Ty> COMMA Ty <o:Operand> => (u, ast::Insn::Load(t, o)),
-	STORE <t1:Ty> <o1:Operand> COMMA <_t2:Ty> <o2:Operand> => (gensym("store"), ast::Insn::Store(t1, o1, o2)),
+	STORE <t1:Ty> <o1:Operand> COMMA <_t2:Ty> <o2:Operand> => (gensym(arena, "store"), ast::Insn::Store(t1, o1, o2)),
 	<u:UID> EQUALS ICMP <c:Cnd> <t:Ty> <o1:Operand> COMMA <o2:Operand> => (u, ast::Insn::Icmp(c, t, o1, o2)),
-	CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (gensym("call"), ast::Insn::Call(t, o, args)),
+	CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (gensym(arena, "call"), ast::Insn::Call(t, o, args)),
 	<u:UID> EQUALS CALL <t:Ty> <o:Operand> LPAREN <args:TyOperandList> RPAREN => (u, ast::Insn::Call(t, o, args)),
 	<u:UID> EQUALS BITCAST <t1:Ty> <o:Operand> TO <t2:Ty> => (u, ast::Insn::Bitcast(t1, o, t2)),
 	<u:UID> EQUALS GEP <t:Ty> COMMA Ty <o:Operand> COMMA <os:IOperandList> => (u, ast::Insn::Gep(t, o, os)),
 };
 
-InsnList: Vec<(ast::Uid, ast::Insn)> = <(Insn)*> => <>;
+InsnList: Vec<(ast::Uid<'ast>, ast::Insn<'ast>)> = <(Insn)*> => <>;
 
-GdeclList: Vec<(ast::Ty, ast::Ginit)> = {
+GdeclList: Vec<(ast::Ty<'ast>, ast::Ginit<'ast>)> = {
 	() => vec![],
 	Ty Ginit => vec![(<>)],
 	<gs:GdeclList> COMMA <t:Ty> <g:Ginit> => append(gs, (t, g)),
 };
 
-Ginit: ast::Ginit = {
+Ginit: ast::Ginit<'ast> = {
 	NULL => ast::Ginit::Null,
 	GID => ast::Ginit::Gid(<>),
 	INT => ast::Ginit::Int(i64::from_str(<>).unwrap()),
@@ -255,5 +257,6 @@ Comma<T>: Vec<T> = {
     }
 };
 
-UID: String = UID_RAW => <>[1..].to_string();
-GID: String = GID_RAW => <>[1..].to_string();
+UID: ArenaIntern<'ast, str> = UID_RAW => arena.intern(&<>[1..]);
+GID: ArenaIntern<'ast, str> = GID_RAW => arena.intern(&<>[1..]);
+LBL: ArenaIntern<'ast, str> = LBL_RAW => arena.intern(&<>[..]);

@@ -78,7 +78,7 @@ pub fn typecheck(prog: &ast::Prog) -> Result<typechecker::Context, typechecker::
 }
 
 // doesn't really need owndership of tcx, but lifetimes are a pain
-pub fn to_llvm<'ll>(oprog: ast::Prog, tcx: typechecker::Context, arena: &'ll mut Arena<str>) -> llvm::ast::Prog<'ll> {
+pub fn to_llvm<'ll>(oprog: ast::Prog, tcx: typechecker::Context, arena: &'ll Arena<str>) -> llvm::ast::Prog<'ll> {
     let context = ast_to_ll::Context::new(tcx, arena);
 
     context.lower(oprog)

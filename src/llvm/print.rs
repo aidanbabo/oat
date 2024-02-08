@@ -43,7 +43,7 @@ impl<T: fmt::Display> fmt::Display for Ptr<T> {
     }
 }
 
-impl fmt::Display for Ty {
+impl<'a> fmt::Display for Ty<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Ty::Void => write!(f, "void"),
@@ -67,7 +67,7 @@ impl fmt::Display for Ty {
     }
 }
 
-impl fmt::Display for Operand {
+impl<'a> fmt::Display for Operand<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Operand::Null => write!(f, "null"),
@@ -107,7 +107,7 @@ impl fmt::Display for Cnd {
     }
 }
 
-impl fmt::Display for Insn {
+impl<'a> fmt::Display for Insn<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Insn::Binop(b, t, o1, o2) => write!(f, "{b} {t} {o1}, {o2}"),
@@ -143,7 +143,7 @@ impl fmt::Display for Insn {
     }
 }
 
-impl fmt::Display for Terminator {
+impl<'a> fmt::Display for Terminator<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Terminator::Ret(_, None) => write!(f, "ret void"),
@@ -154,7 +154,7 @@ impl fmt::Display for Terminator {
     }
 }
 
-impl fmt::Display for Block {
+impl<'a> fmt::Display for Block<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (u, i) in &self.insns {
             match i {
@@ -167,7 +167,7 @@ impl fmt::Display for Block {
     }
 }
 
-impl fmt::Display for Cfg {
+impl<'a> fmt::Display for Cfg<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}", self.entry)?;
         for (label, b) in &self.blocks {
@@ -178,7 +178,7 @@ impl fmt::Display for Cfg {
     }
 }
 
-impl fmt::Display for Ginit {
+impl<'a> fmt::Display for Ginit<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Ginit::Null => write!(f, "null"),
@@ -200,7 +200,7 @@ impl fmt::Display for Ginit {
     }
 }
 
-impl fmt::Display for Prog {
+impl<'a> fmt::Display for Prog<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (u, t) in &self.tdecls {
             writeln!(f, "%{u} = type {t}")?

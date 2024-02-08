@@ -23,7 +23,7 @@ type Mid = i64; // memory block id
 type Fid = i64; // stack frame id
 type Idx = i64; // index
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Bid<'a> {
     Global(ast::Gid<'a>),
     Heap(Mid),
@@ -156,7 +156,7 @@ fn mval_of_gdecl<'a>(gd: &ast::Gdecl<'a>) -> MVal<'a> {
             })),
             (ty, ast::Ginit::Gid(g)) => MTree::Word(SVal::Ptr(Ptr {
                 ty: ty.clone(),
-                bid: Bid::Global(g.clone()),
+                bid: Bid::Global(*g),
                 indices: vec![0],
             })),
             (_, ast::Ginit::Bitcast(t1, v, _)) => mtree_of_gdecl(&(t1.clone(), (**v).clone())),
@@ -209,7 +209,7 @@ impl<'prog> Interpreter<'prog> {
         let mut interp = Interpreter {
             prog,
             config: Config {
-                globals: prog.gdecls.iter().map(|(g, gd)| (g.clone(), mval_of_gdecl(gd))).collect(),
+                globals: prog.gdecls.iter().map(|(g, gd)| (*g, mval_of_gdecl(gd))).collect(),
                 heap: Default::default(),
                 stack: Default::default(),
             },
@@ -249,7 +249,7 @@ impl<'prog> Interpreter<'prog> {
         self.id
     }
 
-    fn effective_type(&self, t: &ast::Ty) -> ast::Ty {
+    fn effective_type(&self, t: &ast::Ty<'prog>) -> ast::Ty<'prog> {
         if let ast::Ty::Named(id) = t {
             self.effective_type(&self.prog.tdecls[id])
         } else {
@@ -341,7 +341,7 @@ impl<'prog> Interpreter<'prog> {
     // this function looks a little weird, I would like to write it
     // with a loop and not a fold, but the borrow checker better understands
     // functions/closures than loop iterations, so this is what we are left with
-    fn store_idxs(m: &mut MVal, idxs: &[Idx], mt: &MTree) -> Result<(), ExecError> {
+    fn store_idxs(m: &mut MVal<'prog>, idxs: &[Idx], mt: &MTree<'prog>) -> Result<(), ExecError> {
         if idxs.is_empty() {
             return Ok(());
         }
@@ -368,7 +368,7 @@ impl<'prog> Interpreter<'prog> {
         Ok(())
     }
 
-    fn load_bid(&self, bid: &Bid) -> Result<&MVal, ExecError> {
+    fn load_bid(&self, bid: &Bid<'prog>) -> Result<&MVal<'prog>, ExecError> {
         match bid {
             Bid::Null => Err(ExecError::NullPtrDeref),
             Bid::Heap(mid) => self.config.heap.get(mid).ok_or(ExecError::UseAfterFree),
@@ -377,34 +377,34 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn load_ptr(&self, p: &Ptr) -> Result<MTree, ExecError> {
+    fn load_ptr(&self, p: &Ptr<'prog>) -> Result<MTree<'prog>, ExecError> {
         Self::load_idxs(self.load_bid(&p.bid)?, &p.indices)
     }
 
-    fn store_ptr(&mut self, p: &Ptr, mt: &MTree) -> Result<(), ExecError> {
+    fn store_ptr(&mut self, p: &Ptr<'prog>, mt: &MTree<'prog>) -> Result<(), ExecError> {
         let mut mval = self.load_bid(&p.bid)?.clone();
-        match &p.bid {
+        match p.bid {
             Bid::Null => Err(ExecError::NullPtrDeref),
             Bid::Heap(mid) => {
                 Self::store_idxs(&mut mval, &p.indices, mt)?;
-                self.config.heap.insert(*mid, mval);
+                self.config.heap.insert(mid, mval);
                 Ok(())
             }
             Bid::Global(gid) => {
                 Self::store_idxs(&mut mval, &p.indices, mt)?;
-                self.config.globals.insert(gid.clone(), mval);
+                self.config.globals.insert(gid, mval);
                 Ok(())
             }
             Bid::Stack(fid) => {
                 Self::store_idxs(&mut mval, &p.indices, mt)?;
-                self.config.stack.insert(*fid, mval);
+                self.config.stack.insert(fid, mval);
                 Ok(())
             }
         }
     }
 
     // Tag and GEP implementation
-    fn effective_tag(&self, p: &Ptr) -> ast::Ty {
+    fn effective_tag(&self, p: &Ptr<'prog>) -> ast::Ty<'prog> {
         let mut idxs = p.indices.get(1..).expect("effective_tag: invalid pointer to missing first index");
         let mut tag = &p.ty;
         while !idxs.is_empty() {
@@ -446,7 +446,7 @@ impl<'prog> Interpreter<'prog> {
                 t => t.clone(),
             }
         }
-        fn flatten_ty<'a>(ty: &'a ast::Ty, b: &mut Vec<&'a ast::Ty>) {
+        fn flatten_ty<'a, 'p>(ty: &'a ast::Ty<'p>, b: &mut Vec<&'a ast::Ty<'p>>) {
             match ty {
                 ast::Ty::Struct(ts) => {
                     for t in ts {
@@ -471,7 +471,7 @@ impl<'prog> Interpreter<'prog> {
         Iterator::eq(styb.iter(), tagb.iter().take(styb.len()))
     }
 
-    fn gep_ptr(&self, ot: &ast::Ty, p: &Ptr, idxs: &[Idx]) -> SVal {
+    fn gep_ptr(&self, ot: &ast::Ty<'prog>, p: &Ptr<'prog>, idxs: &[Idx]) -> SVal<'prog> {
         if !self.legal_gep(ot, &self.effective_tag(p)) {
             return SVal::Undef;
         }
@@ -480,16 +480,16 @@ impl<'prog> Interpreter<'prog> {
             Ptr { bid: Bid::Null, .. } => SVal::Undef,
             Ptr { ty, bid, indices } => SVal::Ptr(Ptr {
                 ty: ty.clone(),
-                bid: bid.clone(),
+                bid: *bid,
                 indices: Self::gep_idxs(indices, idxs),
             }),
         }
     }
 
-    fn interp_operand(&self, locals: &Locals, ty: &ast::Ty, o: &ast::Operand) -> SVal {
+    fn interp_operand(&self, locals: &Locals<'prog>, ty: &ast::Ty<'prog>, o: ast::Operand<'prog>) -> SVal<'prog> {
         match (ty, o) {
             (ast::Ty::I64, ast::Operand::Const(i)) |
-            (ast::Ty::I1, ast::Operand::Const(i)) => SVal::Int(*i),
+            (ast::Ty::I1, ast::Operand::Const(i)) => SVal::Int(i),
             (ast::Ty::Ptr(ty), ast::Operand::Null) => SVal::Ptr(Ptr {
                 ty: (**ty).clone(),
                 bid: Bid::Null,
@@ -497,16 +497,16 @@ impl<'prog> Interpreter<'prog> {
             }),
             (ast::Ty::Ptr(ty), ast::Operand::Gid(g)) => SVal::Ptr(Ptr {
                 ty: (**ty).clone(),
-                bid: Bid::Global(g.clone()),
+                bid: Bid::Global(g),
                 indices: vec![0],
             }),
-            (_, ast::Operand::Id(u)) => locals[u].clone(),
+            (_, ast::Operand::Id(u)) => locals[&u].clone(),
             (ast::Ty::Named(id), o) => self.interp_operand(locals, &self.prog.tdecls[id], o),
             _ => panic!("interp operand: malformed operand {o:?}:{ty:?}"),
         }
     }
 
-    fn runtime_call(&mut self, ty: &ast::Ty, func: ast::Gid, args: &[SVal]) -> Result<SVal, ExecError> {
+    fn runtime_call(&mut self, ty: &ast::Ty<'prog>, func: ast::Gid<'prog>, args: &[SVal<'prog>]) -> Result<SVal<'prog>, ExecError> {
         let load_strptr = |p: &Ptr| if let MTree::Str(s) = self.load_ptr(p)? {
             Ok(s)
         } else {
@@ -556,7 +556,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn interp_call(&mut self, ty: &ast::Ty, func_name: ast::Gid, args: &[SVal]) -> Result<SVal, ExecError> {
+    fn interp_call(&mut self, ty: &ast::Ty<'prog>, func_name: ast::Gid<'prog>, args: &[SVal<'prog>]) -> Result<SVal<'prog>, ExecError> {
         if RUNTIME_FUNCTIONS.contains(&func_name.into_ref()) {
             return self.runtime_call(ty, func_name, args);
         }
@@ -574,20 +574,21 @@ impl<'prog> Interpreter<'prog> {
         self.interp_cfg(&func.cfg, locals)
     }
 
-    fn interp_insns(&mut self, locs: &mut Locals, insns: &[(ast::Uid, ast::Insn)]) -> Result<(), ExecError> {
+    fn interp_insns(&mut self, locs: &mut Locals<'prog>, insns: &[(ast::Uid<'prog>, ast::Insn<'prog>)]) -> Result<(), ExecError> {
         for insn in insns {
-            match insn {
+            let (u, insn) = insn;
+            match (*u, insn) {
                 (u, ast::Insn::Binop(b, t, o1, o2)) => {
-                    let v1 = self.interp_operand(locs, t, o1);
-                    let v2 = self.interp_operand(locs, t, o2);
+                    let v1 = self.interp_operand(locs, t, *o1);
+                    let v2 = self.interp_operand(locs, t, *o2);
                     let vr = Self::interp_bop(*b, v1, v2);
-                    locs.insert(u.clone(), vr);
+                    locs.insert(u, vr);
                 }
                 (u, ast::Insn::Icmp(cnd, t, o1, o2)) => {
-                    let v1 = self.interp_operand(locs, t, o1);
-                    let v2 = self.interp_operand(locs, t, o2);
+                    let v1 = self.interp_operand(locs, t, *o1);
+                    let v2 = self.interp_operand(locs, t, *o2);
                     let vr = Self::interp_cnd(*cnd, v1, v2);
-                    locs.insert(u.clone(), vr);
+                    locs.insert(u, vr);
                 }
                 (u, ast::Insn::Alloca(ty)) => {
                     let mut entry = self.config.stack.last_entry().expect("stack empty");
@@ -597,10 +598,10 @@ impl<'prog> Interpreter<'prog> {
                         indices: vec![entry.get().0.len() as i64],
                     });
                     entry.get_mut().0.push(MTree::Word(SVal::Undef));
-                    locs.insert(u.clone(), ptr);
+                    locs.insert(u, ptr);
                 }
                 (u, ast::Insn::Load(t, o)) => {
-                    let mt = match self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), o) {
+                    let mt = match self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), *o) {
                         SVal::Ptr(p) => {
                             if self.effective_type(&self.effective_tag(&p)) != self.effective_type(t) {
                                 return Err(ExecError::IncompatTagDeref);
@@ -615,11 +616,11 @@ impl<'prog> Interpreter<'prog> {
                         MTree::Word(v) => v,
                         _ => panic!("load: returned aggregate"),
                     };
-                    locs.insert(u.clone(), v);
+                    locs.insert(u, v);
                 }
                 (_, ast::Insn::Store(t, os, od)) => {
-                    let vs = self.interp_operand(locs, t, os);
-                    let vd = self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), od);
+                    let vs = self.interp_operand(locs, t, *os);
+                    let vd = self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), *od);
                     match vd {
                         SVal::Ptr(p) => {
                             if self.effective_type(&self.effective_tag(&p)) != self.effective_type(t) {
@@ -634,21 +635,21 @@ impl<'prog> Interpreter<'prog> {
                 (u, ast::Insn::Call(t, ofn, ato)) => {
                     let ats: Vec<_> = ato.iter().map(|(t, _)| t.clone()).collect();
                     let ft = ast::Ty::Ptr(Box::new(ast::Ty::Fun(ats, Box::new(t.clone()))));
-                    let g = match self.interp_operand(locs, &ft, ofn) {
+                    let g = match self.interp_operand(locs, &ft, *ofn) {
                         SVal::Ptr(Ptr { bid: Bid::Global(g), indices, ..}) if indices == [0] => g,
                         _ => panic!("bad call arg"),
                     };
-                    let args: Vec<_> = ato.iter().map(|(t, o)| self.interp_operand(locs, t, o)).collect();
+                    let args: Vec<_> = ato.iter().map(|(t, o)| self.interp_operand(locs, t, *o)).collect();
                     let r = self.interp_call(t, g, &args)?;
-                    locs.insert(u.clone(), r);
+                    locs.insert(u, r);
                 }
                 (u, ast::Insn::Bitcast(t1, o, _)) => {
-                    let v = self.interp_operand(locs, t1, o);
-                    locs.insert(u.clone(), v);
+                    let v = self.interp_operand(locs, t1, *o);
+                    locs.insert(u, v);
                 }
                 (u, ast::Insn::Gep(t, o, os)) => {
                     let idxs: Vec<_> = os.iter()
-                        .map(|o| self.interp_operand(locs, &ast::Ty::I64, o))
+                        .map(|o| self.interp_operand(locs, &ast::Ty::I64, *o))
                         .map(|sval| {
                             if let SVal::Int(i) = sval {
                                 i
@@ -656,19 +657,19 @@ impl<'prog> Interpreter<'prog> {
                                 panic!("idx_of_sval: non-integer value")
                             }
                         }).collect();
-                    let v = match self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), o) {
+                    let v = match self.interp_operand(locs, &ast::Ty::Ptr(Box::new(t.clone())), *o) {
                         SVal::Ptr(p) => self.gep_ptr(t, &p, &idxs),
                         SVal::Undef => SVal::Undef,
                         SVal::Int(_) => panic!("non-ptr arg for gep {t:?}"),
                     };
-                    locs.insert(u.clone(), v);
+                    locs.insert(u, v);
                 }
             }
         }
         Ok(())
     }
 
-    fn interp_cfg(&mut self, cfg: &ast::Cfg, mut locs: Locals) -> Result<SVal, ExecError> {
+    fn interp_cfg(&mut self, cfg: &ast::Cfg<'prog>, mut locs: Locals<'prog>) -> Result<SVal<'prog>, ExecError> {
         let mut block = &cfg.entry;
         loop {
             self.interp_insns(&mut locs, &block.insns)?;
@@ -679,13 +680,13 @@ impl<'prog> Interpreter<'prog> {
                 }
                 (_, ast::Terminator::Ret(t, Some(o))) => {
                     self.config.stack.pop_last();
-                    return Ok(self.interp_operand(&locs, t, o));
+                    return Ok(self.interp_operand(&locs, t, *o));
                 }
                 (_, ast::Terminator::Br(l)) => {
                     &cfg.blocks.iter().find(|b| &*b.0 == l.into_ref()).expect("no block found with label").1
                 }
                 (_, ast::Terminator::Cbr(o, l1, l2)) => {
-                    let v = self.interp_operand(&locs, &ast::Ty::I1, o);
+                    let v = self.interp_operand(&locs, &ast::Ty::I1, *o);
                     let l = if Self::interp_i1(&v) { l1 } else { l2 };
                     &cfg.blocks.iter().find(|b| &*b.0 == l.into_ref()).expect("no block found with label").1
                 }
