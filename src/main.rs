@@ -78,7 +78,8 @@ fn main() {
 
     if args.interpret_ll {
         let prog_args: Vec<_> = args.args.iter().map(|s| &**s).collect();
-        let r = oat::llvm::interp(&ll_prog, &prog_args).unwrap();
+        let entry = ll_arena.intern("main");
+        let r = oat::llvm::interp(&ll_prog, &prog_args, entry).unwrap();
         println!("Interpreter Result: {r}");
         return;
     }

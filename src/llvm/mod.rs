@@ -3,6 +3,7 @@
 //      gep: type is not the pointer type but the type listed after the `getelementptr` keyword.
 
 use lalrpop_util::lalrpop_mod;
+use internment::ArenaIntern;
 
 lalrpop_mod!(parser, "/llvm/parser.rs"); // synthesized by LALRPOP
 pub mod ast;
@@ -19,8 +20,8 @@ pub fn parse(input: &str) -> ParseResult<ast::Prog> {
     parser::ProgParser::new().parse(input)
 }
 
-pub fn interp(prog: &ast::Prog, args: &[&str]) -> Result<u8, ExecError> {
-    interp::interp_prog(prog, args).map(|i| i as u8)
+pub fn interp(prog: &ast::Prog, args: &[&str], entry: ArenaIntern<'_, str>) -> Result<u8, ExecError> {
+    interp::interp_prog(prog, args, entry).map(|i| i as u8)
 }
 
 pub use print::write;

@@ -12,6 +12,8 @@
 //      have to use a box and create a new type. This is even worse for function types as we don't
 //      have the type available when we parse and will always have to create it.
 
+use internment::ArenaIntern;
+
 use std::collections::{HashMap, BTreeMap};
 use std::{fmt, ops};
 
@@ -22,14 +24,14 @@ type Fid = i64; // stack frame id
 type Idx = i64; // index
 
 #[derive(Clone, Debug, PartialEq)]
-enum Bid {
-    Global(ast::Gid),
+enum Bid<'a> {
+    Global(ast::Gid<'a>),
     Heap(Mid),
     Stack(Fid),
     Null,
 }
 
-impl fmt::Display for Bid {
+impl<'a> fmt::Display for Bid<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Bid::Global(gid) => write!(f, "@{gid}"),
@@ -41,13 +43,13 @@ impl fmt::Display for Bid {
 }
 
 #[derive(Clone, Debug)]
-struct Ptr {
-    ty: ast::Ty,
-    bid: Bid,
+struct Ptr<'a> {
+    ty: ast::Ty<'a>,
+    bid: Bid<'a>,
     indices: Vec<Idx>, 
 }
 
-impl fmt::Display for Ptr {
+impl<'a> fmt::Display for Ptr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {} ", self.ty, self.bid)?;
         super::print::write_separated(f, ", ", &self.indices)?;
@@ -57,13 +59,13 @@ impl fmt::Display for Ptr {
 
 // stack value
 #[derive(Clone, Debug)]
-enum SVal {
+enum SVal<'a> {
     Undef,
     Int(i64),
-    Ptr(Ptr),
+    Ptr(Ptr<'a>),
 }
 
-impl fmt::Display for SVal {
+impl<'a> fmt::Display for SVal<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SVal::Undef => write!(f, "undef"),
@@ -75,13 +77,13 @@ impl fmt::Display for SVal {
 
 // memory tree and value
 #[derive(Clone, Debug)]
-enum MTree {
-    Word(SVal),
+enum MTree<'a> {
+    Word(SVal<'a>),
     Str(String),
-    Node(MVal),
+    Node(MVal<'a>),
 }
 
-impl fmt::Display for MTree {
+impl<'a> fmt::Display for MTree<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MTree::Word(sv) => write!(f, "{sv}"),
@@ -92,9 +94,9 @@ impl fmt::Display for MTree {
 }
 
 #[derive(Clone, Debug)]
-struct MVal(Vec<MTree>);
+struct MVal<'a>(Vec<MTree<'a>>);
 
-impl fmt::Display for MVal {
+impl<'a> fmt::Display for MVal<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         super::print::write_separated(f, " ", &self.0)?;
@@ -104,23 +106,23 @@ impl fmt::Display for MVal {
 
 
 #[derive(Clone, Debug)]
-struct Locals(HashMap<ast::Uid, SVal>);
+struct Locals<'a>(HashMap<ast::Uid<'a>, SVal<'a>>);
 
-impl ops::Deref for Locals {
-    type Target = HashMap<ast::Uid, SVal>;
+impl<'a> ops::Deref for Locals<'a> {
+    type Target = HashMap<ast::Uid<'a>, SVal<'a>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl ops::DerefMut for Locals {
+impl<'a> ops::DerefMut for Locals<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl fmt::Display for Locals {
+impl<'a> fmt::Display for Locals<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{")?;
         let mut first = true;
@@ -136,16 +138,16 @@ impl fmt::Display for Locals {
     }
 }
 
-struct Config {
-    globals: HashMap<ast::Gid, MVal>,
-    heap: HashMap<Mid, MVal>,
+struct Config<'a> {
+    globals: HashMap<ast::Gid<'a>, MVal<'a>>,
+    heap: HashMap<Mid, MVal<'a>>,
     // basically a stack but with fast lookup, fids are always increasing
-    stack: BTreeMap<Fid, MVal>,
+    stack: BTreeMap<Fid, MVal<'a>>,
 }
 
 // this always adds a lists worth of indirection, why?
-fn mval_of_gdecl(gd: &ast::Gdecl) -> MVal {
-    fn mtree_of_gdecl(gd: &ast::Gdecl) -> MTree {
+fn mval_of_gdecl<'a>(gd: &ast::Gdecl<'a>) -> MVal<'a> {
+    fn mtree_of_gdecl<'a>(gd: &ast::Gdecl<'a>) -> MTree<'a> {
         match gd {
             (ty, ast::Ginit::Null) => MTree::Word(SVal::Ptr(Ptr {
                 ty: ty.clone(),
@@ -195,10 +197,10 @@ pub enum ExecError {
 const RUNTIME_FUNCTIONS: &[&str] = &["ll_puts", "ll_strcat", "ll_ltoa"];
 
 struct Interpreter<'prog> {
-    prog: &'prog ast::Prog,
-    config: Config,
+    prog: &'prog ast::Prog<'prog>,
+    config: Config<'prog>,
     id: i64,
-    init_args: Vec<SVal>,
+    init_args: Vec<SVal<'prog>>,
 }
 
 impl<'prog> Interpreter<'prog> {
@@ -255,7 +257,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn interp_bop(b: ast::Bop, v1: SVal, v2: SVal) -> SVal {
+    fn interp_bop(b: ast::Bop, v1: SVal<'prog>, v2: SVal<'prog>) -> SVal<'prog> {
         let (i, j) = match (v1, v2) {
             (SVal::Int(i), SVal::Int(j)) => (i, j),
             _ => panic!("invalid arg: interp_bop"),
@@ -277,7 +279,7 @@ impl<'prog> Interpreter<'prog> {
         SVal::Int(ret)
     }
 
-    fn interp_cnd(c: ast::Cnd, v1: SVal, v2: SVal) -> SVal {
+    fn interp_cnd(c: ast::Cnd, v1: SVal<'prog>, v2: SVal<'prog>) -> SVal<'prog> {
         match (v1, v2, c) {
             (SVal::Ptr(p1), SVal::Ptr(p2), ast::Cnd::Eq) => {
                 let b = p1.bid == p2.bid && p1.indices == p2.indices;
@@ -310,7 +312,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn load_idxs(mut m: &MVal, mut idxs: &[Idx]) -> Result<MTree, ExecError> {
+    fn load_idxs(mut m: &MVal<'prog>, mut idxs: &[Idx]) -> Result<MTree<'prog>, ExecError> {
 
         if idxs.is_empty() {
             return Ok(MTree::Node(m.clone()));
@@ -434,8 +436,8 @@ impl<'prog> Interpreter<'prog> {
     }
 
     // direct port: this is so annoying looking :(
-    fn legal_gep(&self, sty: &ast::Ty, tag: &ast::Ty) -> bool {
-        fn ptrtoi8(named_types: &HashMap<ast::Tid, ast::Ty>, ty: &ast::Ty) -> ast::Ty {
+    fn legal_gep(&self, sty: &ast::Ty<'prog>, tag: &ast::Ty<'prog>) -> bool {
+        fn ptrtoi8<'a>(named_types: &HashMap<ast::Tid<'a>, ast::Ty<'a>>, ty: &ast::Ty<'a>) -> ast::Ty<'a> {
             match ty {
                 ast::Ty::Ptr(_) => ast::Ty::Ptr(Box::new(ast::Ty::I8)),
                 ast::Ty::Struct(ts) => ast::Ty::Struct(ts.iter().map(|t| ptrtoi8(named_types, t)).collect()),
@@ -504,7 +506,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn runtime_call(&mut self, ty: &ast::Ty, func: &ast::Gid, args: &[SVal]) -> Result<SVal, ExecError> {
+    fn runtime_call(&mut self, ty: &ast::Ty, func: ast::Gid, args: &[SVal]) -> Result<SVal, ExecError> {
         let load_strptr = |p: &Ptr| if let MTree::Str(s) = self.load_ptr(p)? {
             Ok(s)
         } else {
@@ -518,7 +520,7 @@ impl<'prog> Interpreter<'prog> {
             &s[..end]
         }
 
-        match (ty, &**func, args) {
+        match (ty, func.into_ref(), args) {
             (ast::Ty::Void, "ll_puts", [SVal::Ptr(p)]) => {
                 let nt = load_strptr(p)?;
                 let s = null_terminated_to_rust(&nt);
@@ -554,12 +556,12 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn interp_call(&mut self, ty: &ast::Ty, func_name: &ast::Gid, args: &[SVal]) -> Result<SVal, ExecError> {
-        if RUNTIME_FUNCTIONS.contains(&&**func_name) {
+    fn interp_call(&mut self, ty: &ast::Ty, func_name: ast::Gid, args: &[SVal]) -> Result<SVal, ExecError> {
+        if RUNTIME_FUNCTIONS.contains(&func_name.into_ref()) {
             return self.runtime_call(ty, func_name, args);
         }
 
-        let (_, func) = self.prog.fdecls.iter().find(|f| &f.0 == func_name).unwrap_or_else(|| panic!("interp_call: undefined function {func_name}"));
+        let (_, func) = self.prog.fdecls.iter().find(|f| f.0 == func_name).unwrap_or_else(|| panic!("interp_call: undefined function {func_name}"));
 
         if func.params.len() != args.len() {
             panic!("interp_call: wrong no. arguments for {func_name}");
@@ -637,7 +639,7 @@ impl<'prog> Interpreter<'prog> {
                         _ => panic!("bad call arg"),
                     };
                     let args: Vec<_> = ato.iter().map(|(t, o)| self.interp_operand(locs, t, o)).collect();
-                    let r = self.interp_call(t, &g, &args)?;
+                    let r = self.interp_call(t, g, &args)?;
                     locs.insert(u.clone(), r);
                 }
                 (u, ast::Insn::Bitcast(t1, o, _)) => {
@@ -680,26 +682,22 @@ impl<'prog> Interpreter<'prog> {
                     return Ok(self.interp_operand(&locs, t, o));
                 }
                 (_, ast::Terminator::Br(l)) => {
-                    &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1
+                    &cfg.blocks.iter().find(|b| &*b.0 == l.into_ref()).expect("no block found with label").1
                 }
                 (_, ast::Terminator::Cbr(o, l1, l2)) => {
                     let v = self.interp_operand(&locs, &ast::Ty::I1, o);
                     let l = if Self::interp_i1(&v) { l1 } else { l2 };
-                    &cfg.blocks.iter().find(|b| &*b.0 == l).expect("no block found with label").1
+                    &cfg.blocks.iter().find(|b| &*b.0 == l.into_ref()).expect("no block found with label").1
                 }
             }
         }
     }
-
-    pub fn run(&mut self) -> Result<SVal, ExecError> {
-        self.interp_call(&ast::Ty::I64, &"main".to_string(), &self.init_args.clone())
-    }
 }
 
 // hardcoded in i64 return value
-pub fn interp_prog(prog: &ast::Prog, args: &[&str]) -> Result<i64, ExecError> {
+pub fn interp_prog(prog: &ast::Prog, args: &[&str], entry: ArenaIntern<'_, str>) -> Result<i64, ExecError> {
     let mut interp = Interpreter::new(prog, args);
-    let r = interp.run()?;
+    let r = interp.interp_call(&ast::Ty::I64, entry, &interp.init_args.clone())?;
 
     if let SVal::Int(i) = r {
         Ok(i)
