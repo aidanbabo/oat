@@ -1,4 +1,5 @@
 use clap::Parser;
+use internment::Arena;
 
 use std::path::PathBuf;
 use std::fs;
@@ -28,6 +29,8 @@ fn main() {
         process::exit(1);
     };
 
+    let mut ll_arena = Arena::new();
+
     let ll_prog = if ext == "oat" {
         let s = fs::read_to_string(&args.path).unwrap();
         let prog = match oat::oat::parse(&s) {
@@ -54,7 +57,7 @@ fn main() {
             return;
         }
 
-        oat::oat::to_llvm(prog, tctx)
+        oat::oat::to_llvm(prog, tctx, &mut ll_arena)
     } else if ext == "ll" {
         let s = fs::read_to_string(&args.path).unwrap();
         match oat::llvm::parse(&s) {
