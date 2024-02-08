@@ -49,9 +49,8 @@ impl FunContext {
 pub struct Context {
     llprog: llast::Prog,
     globals: HashMap<oast::Ident, (llast::Gid, llast::Ty)>,
-    sym_num: usize,
-    global_var_tys: HashMap<oast::Ident, llast::Ty>,
     structs: HashMap<oast::Ident, Vec<(llast::Ty, oast::Ident)>>,
+    sym_num: usize,
 }
 
 impl Context {
@@ -65,7 +64,6 @@ impl Context {
             },
             globals: Default::default(),
             sym_num: 0,
-            global_var_tys: tctx.vars.into_iter().map(|(n, t)| (n, tipe(t))).collect(),
             structs: tctx.structs.into_iter().map(|(n, fs)| {
                 let pairs = fs.into_iter().map(|(ty, n)| (tipe(ty), n)).collect();
                 (n, pairs)
@@ -247,14 +245,24 @@ impl Context {
         false
     }
 
+    fn typecast(&mut self, fun_ctx: &mut FunContext, src: llast::Ty, op: llast::Operand, dst: llast::Ty) -> llast::Operand {
+        if src == dst {
+            return op
+        }
+
+        let bitcast = self.gensym("_coerce");
+        fun_ctx.push_insn(bitcast.clone(), llast::Insn::Bitcast(src, op.clone(), dst.clone()));
+        llast::Operand::Id(bitcast)
+    }
+
     fn stmt(&mut self, fun_ctx: &mut FunContext, stmt: oast::Stmt) -> bool {
         match stmt {
             oast::Stmt::Assn(lhs, rhs) => {
                 // todo: evaluation order?
                 let (rhs_op, ty) = self.exp(fun_ctx, rhs.t);
                 let (lhs_ptr_op, pointee_ty) = self.lhs(fun_ctx, lhs.t);
-                debug_assert_eq!(ty, pointee_ty);
-                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), rhs_op, lhs_ptr_op));
+                let rhs_op = self.typecast(fun_ctx, ty, rhs_op, pointee_ty.clone());
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(pointee_ty, rhs_op, lhs_ptr_op));
                 false
             },
             oast::Stmt::Decl(d) => {
@@ -262,7 +270,10 @@ impl Context {
                 false
             },
             oast::Stmt::Ret(v) => {
-                let ret_op = v.map(|v| self.exp(fun_ctx, v.t).0);
+                let ret_op = v.map(|v| {
+                    let (op, ty) = self.exp(fun_ctx, v.t);
+                    self.typecast(fun_ctx, ty, op, fun_ctx.ret_ty.clone())
+                });
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Ret(fun_ctx.ret_ty.clone(), ret_op));
                 true
             },
@@ -299,7 +310,7 @@ impl Context {
             oast::Stmt::IfNull(ty, name, exp, if_blk, else_blk) => {
                 let (cnd_op, cnd_ty) = self.exp(fun_ctx, exp.t);
                 let null_check_uid = self.gensym("_null_check");
-                let null_check = llast::Insn::Icmp(llast::Cnd::Ne, cnd_ty, cnd_op.clone(), llast::Operand::Null);
+                let null_check = llast::Insn::Icmp(llast::Cnd::Ne, cnd_ty.clone(), cnd_op.clone(), llast::Operand::Null);
                 fun_ctx.push_insn(null_check_uid.clone(), null_check);
 
                 let then_lbl = self.gensym("then");
@@ -313,6 +324,7 @@ impl Context {
                 let alloca_uid = self.gensym(&name);
                 fun_ctx.cfg.entry.insns.push((alloca_uid.clone(), llast::Insn::Alloca(llty.clone())));
                 fun_ctx.locals.insert(name, (alloca_uid.clone(), llty.clone()));
+                let cnd_op = self.typecast(fun_ctx, cnd_ty, cnd_op, llty.clone());
                 fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(llty, cnd_op, llast::Operand::Id(alloca_uid)));
 
                 let if_returns = self.block(fun_ctx, if_blk);
@@ -418,15 +430,17 @@ impl Context {
                 fun_ctx.push_insn(uid.clone(), insn);
                 (llast::Operand::Id(uid), ty)
             }
-            oast::Exp::ArrElems(ty, els) => {
-                let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, tipe(ty), llast::Operand::Const(els.len() as i64));
+            oast::Exp::ArrElems(aty, els) => {
+                let arr_el_ty = tipe(aty);
+                let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, arr_el_ty.clone(), llast::Operand::Const(els.len() as i64));
 
                 for (ix, el) in els.into_iter().enumerate() {
                     let (op, ty) = self.exp(fun_ctx, el.t);
+                    let op = self.typecast(fun_ctx, ty, op, arr_el_ty.clone());
                     let ix_ptr_uid = self.gensym("ix");
                     let ix_ptr_insn = llast::Insn::Gep(array_base_ty.clone(), array_op.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(1), llast::Operand::Const(ix as i64)]);
                     fun_ctx.push_insn(ix_ptr_uid.clone(), ix_ptr_insn);
-                    fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty, op, llast::Operand::Id(ix_ptr_uid)));
+                    fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(arr_el_ty.clone(), op, llast::Operand::Id(ix_ptr_uid)));
                 }
 
                 (array_op, array_ty)
@@ -438,10 +452,11 @@ impl Context {
             }
             oast::Exp::ArrInit(ty, len, name, init) => {
                 // todo: use phi nodes? might make code cleaner
+                let arr_el_ty = tipe(ty);
 
                 // allocate array
                 let (len_op, _) = self.exp(fun_ctx, len.t);
-                let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, tipe(ty), len_op.clone());
+                let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, arr_el_ty.clone(), len_op.clone());
 
                 let init_top_lbl = self.gensym("init_top");
                 let init_body_lbl = self.gensym("init_body");
@@ -467,9 +482,10 @@ impl Context {
                 fun_ctx.start_block(init_body_lbl.clone());
                 fun_ctx.locals.insert(name, (ix_alloca_uid, llast::Ty::I64));
                 let (e_op, e_ty) = self.exp(fun_ctx, init.t);
+                let e_op = self.typecast(fun_ctx, e_ty, e_op, arr_el_ty.clone());
                 let gep_uid = self.gensym("_init_assn");
                 fun_ctx.push_insn(gep_uid.clone(), llast::Insn::Gep(array_base_ty, array_op.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(1), ix_load_op.clone()]));
-                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(e_ty, e_op, llast::Operand::Id(gep_uid)));
+                fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(arr_el_ty, e_op, llast::Operand::Id(gep_uid)));
 
                 // update
                 let update_uid = self.gensym("_init_ix_update");
@@ -491,7 +507,7 @@ impl Context {
                 fun_ctx.push_insn(uid.clone(), llast::Insn::Load(llast::Ty::I64, llast::Operand::Id(len_ptr_uid)));
                 (llast::Operand::Id(uid), llast::Ty::I64)
             }
-            oast::Exp::Struct(struct_name, inits) => {
+            oast::Exp::Struct(struct_name, mut inits) => {
                 let fields = self.structs[&struct_name].clone();
                 let struct_base_ty = llast::Ty::Named(struct_name.clone());
                 let struct_ty = llast::Ty::Ptr(Box::new(struct_base_ty.clone()));
@@ -503,9 +519,11 @@ impl Context {
                 let struct_ptr = llast::Operand::Id(struct_uid);
 
                 for (ix, (ty, name)) in fields.into_iter().enumerate() {
-                    let (_, exp) = inits.iter().find(|(n, _)| n == &name).expect("ensured by typechecker");
-                    // todo bad exp.clone() :/
-                    let (op, _) = self.exp(fun_ctx, exp.t.clone());
+                    let found_ix = inits.iter().position(|(n, _)| n == &name).expect("ensured by typechecker");
+                    let (_, exp) = inits.remove(found_ix);
+
+                    let (op, init_ty) = self.exp(fun_ctx, exp.t);
+                    let op = self.typecast(fun_ctx, init_ty, op, ty.clone());
 
                     let gep_uid = self.gensym(&format!("_{struct_name}.{name}_init"));
                     fun_ctx.push_insn(gep_uid.clone(), llast::Insn::Gep(struct_base_ty.clone(), struct_ptr.clone(), vec![llast::Operand::Const(0), llast::Operand::Const(ix as i64)]));
@@ -537,14 +555,7 @@ impl Context {
                     oast::Binop::Shr => (llast::Ty::I64, llast::Insn::Binop(llast::Bop::Lshr, llast::Ty::I64, op1, op2)),
                     oast::Binop::Sar => (llast::Ty::I64, llast::Insn::Binop(llast::Bop::Ashr, llast::Ty::I64, op1, op2)),
                     oast::Binop::Eq | oast::Binop::Neq => {
-                        let op2 = if t1 != t2 {
-                            let e2_uid = self.gensym("eq_cast");
-                            fun_ctx.push_insn(e2_uid.clone(), llast::Insn::Bitcast(t2, op2, t1.clone()));
-                            llast::Operand::Id(e2_uid)
-                        } else {
-                            op2
-                        };
-
+                        let op2 = self.typecast(fun_ctx, t2, op2, t1.clone());
                         let bop = if obop == oast::Binop::Eq {
                             llast::Cnd::Eq
                         } else {
@@ -604,10 +615,11 @@ impl Context {
     fn call(&mut self, fun_ctx: &mut FunContext, f: oast::Exp, args: Vec<Node<oast::Exp>>, uid: llast::Uid) -> (llast::Operand, llast::Ty) {
         let (fop, tf) = self.exp(fun_ctx, f);
         let llast::Ty::Ptr(p) = tf else { unreachable!() };
-        let llast::Ty::Fun(_, ret_ty) = *p else { unreachable!() };
-        let args: Vec<_> = args.into_iter().map(|a| {
+        let llast::Ty::Fun(arg_tys, ret_ty) = *p else { unreachable!() };
+        let args: Vec<_> = args.into_iter().zip(arg_tys.iter()).map(|(a, arg_ty)| {
             let (op, t) = self.exp(fun_ctx, a.t);
-            (t, op)
+            let op  = self.typecast(fun_ctx, t, op, arg_ty.clone());
+            (arg_ty.clone(), op)
         }).collect();
         fun_ctx.push_insn(uid.clone(), llast::Insn::Call((*ret_ty).clone(), fop, args));
         (llast::Operand::Id(uid), *ret_ty)
