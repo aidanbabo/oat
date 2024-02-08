@@ -259,4 +259,4 @@ Comma<T>: Vec<T> = {
 
 UID: ArenaIntern<'ast, str> = UID_RAW => arena.intern(&<>[1..]);
 GID: ArenaIntern<'ast, str> = GID_RAW => arena.intern(&<>[1..]);
-LBL: ArenaIntern<'ast, str> = LBL_RAW => arena.intern(&<>[..]);
+LBL: ArenaIntern<'ast, str> = LBL_RAW => arena.intern(<>);
