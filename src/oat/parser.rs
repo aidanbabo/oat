@@ -92,6 +92,7 @@ impl ParseRule {
 fn get_rule(kind: TokenKind) -> ParseRule {
     static PARSE_RULES: Lazy<EnumMap<TokenKind, ParseRule>> = Lazy::new(||{ 
         enum_map! { 
+            TokenKind::Eof => ParseRule::new(Precedence::None, None, None),
             TokenKind::IntLit => ParseRule::new(Precedence::None, Some(Parser::parse_int_lit), None),
             TokenKind::Null => ParseRule::new(Precedence::None, None, None),
             TokenKind::String => ParseRule::new(Precedence::None, Some(Parser::parse_string_lit), None),
@@ -760,7 +761,7 @@ mod tests {
     }
 
     fn lex_toks(s: &str) -> Vec<Token> {
-        crate::oat::lexer::Lexer::new(s).lex_all()
+        crate::oat::lexer::Lexer::new(s).lex_all().unwrap()
     }
 
     fn exp_test(s: &str, expected: Node<Exp>) -> Result<(), ParseError> {

@@ -28,6 +28,13 @@ static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
     m
 });
 
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct LexerError {
+    location: Range,
+    message: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Token {
     pub loc: Range,
@@ -37,6 +44,8 @@ pub struct Token {
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, enum_map::Enum)]
 pub enum TokenKind {
+    /// end of file
+    Eof,
     /// [0-9]+ | 0x[0-9a-fA-F]+
     IntLit,
     /// null
@@ -163,45 +172,6 @@ impl Token {
     }
 }
 
-// todo: return result
-pub fn escape_string(s: &str) -> String {
-    let mut out = String::new();
-	let mut iter = s.chars();
-    while let Some(c) = iter.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-
-        let unescaped = iter.next().expect("escaped character");
-        let escaped = match unescaped {
-            'n' => '\n',
-            't' => '\t',
-            '\\' => '\\',
-            '"' => '"',
-            '\'' => '\'', // huh? why would we need to escape this?
-            f@'0'..='9' => {
-                let s = iter.next().expect("second escaped number");
-                let t = iter.next().expect("third escaped number");
-                if !matches!((s, t), ('0'..='9', '0'..='9')) {
-                    panic!("must be numbers!");
-                }
-                let zero = '0' as u32;
-                let n = (f as u32 - zero) * 100
-                    + (s as u32 - zero) * 10
-                    + (t as u32 - zero) ;
-                if n > 255 {
-                    panic!("illegal escaped character constant");
-                }
-                char::from_u32(n).unwrap()
-            }
-            c => panic!("unrecocgnized escape character: '{c}'"),
-        };
-        out.push(escaped);
-    }
-    out
-}
-
 pub struct Lexer<'input> {
     input: &'input str,
     line: usize,
@@ -237,19 +207,19 @@ impl<'input> Lexer<'input> {
         Token::one_line(kind, self.line, i - self.line_start, len, TokenData::None)
     }
 
-    fn integer(&mut self) -> Token {
-        let mut num = 0i64;
+    fn integer(&mut self) -> Result<Token, LexerError> {
         let (start, c0) = self.chars.next().unwrap();
         let mut end = start;
         let mut hex = false;
-        if c0 == '0' {
+        let mut num = if c0 == '0' {
             if let Some((_, 'x')) = self.chars.peek() {
                 end = self.chars.next().unwrap().0;
                 hex = true;
             }
+            Some(0i64)
         } else {
-            num = c0 as i64 - '0' as i64
-        }
+            Some(c0 as i64 - '0' as i64)
+        };
 
         let multiplier = if hex { 16 } else { 10 };
         let mut c;
@@ -257,21 +227,30 @@ impl<'input> Lexer<'input> {
             match self.chars.peek().map(|(_, c)| c) {
                 Some('0'..='9') => {
                     (end, c) = self.chars.next().unwrap();
-                    num = num * multiplier + (c as i64 - '0' as i64);
+                    num = num.and_then(|n| n.checked_mul(multiplier)).and_then(|n| n.checked_add(c as i64 - '0' as i64));
                 }
-                Some('a'..='f') => {
+                Some('a'..='f') if hex => {
                     (end, c) = self.chars.next().unwrap();
-                    num = num * multiplier + (c as i64 - 'a' as i64 + 10 );
+                    num = num.and_then(|n| n.checked_mul(multiplier)).and_then(|n| n.checked_add(c as i64 - 'a' as i64 + 10 ));
                 }
-                Some('A'..='F') => {
+                Some('A'..='F') if hex => {
                     (end, c) = self.chars.next().unwrap();
-                    num = num * multiplier + (c as i64 - 'A' as i64 + 10 );
+                    num = num.and_then(|n| n.checked_mul(multiplier)).and_then(|n| n.checked_add(c as i64 - 'A' as i64 + 10 ));
                 }
                 _ => break,
             }
         }
-
-        Token::one_line(TokenKind::IntLit, self.line, start - self.line_start, end + 1 - start, TokenData::Int(num))
+        if let Some(n) = num {
+            Ok(Token::one_line(TokenKind::IntLit, self.line, start - self.line_start, end + 1 - start, TokenData::Int(n)))
+        } else {
+            Err(LexerError { 
+                location: Range { 
+                    start: (self.line, start - self.line_start),
+                    end: (self.line, start + end),
+                },
+                message: "integer literal is too large for an i64".to_string(),
+            })
+        }
     }
 
     fn any_ident(&mut self) -> (usize, usize) {
@@ -309,12 +288,22 @@ impl<'input> Lexer<'input> {
         Token::one_line(kind, self.line, start - self.line_start, end - start, data)
     }
 
-    fn string(&mut self) -> Token {
+    fn string(&mut self) -> Result<Token, LexerError> {
         let (start, _) = self.chars.next().unwrap();
         let start_line = self.line;
         let start_col = start - self.line_start;
+        let mut contents = String::new();
         let end = loop {
-            let Some((i, c)) = self.chars.next() else { panic!("unclosed string literal") };
+            let error_maker = {
+                let line = self.line;
+                let line_start = self.line_start;
+                move |end, message| LexerError {
+                    location: Range { start: (start_line, start_col), end: (line, end - line_start) }, 
+                    message,
+                }
+            };
+
+            let (i, c) = self.chars.next().ok_or_else(|| error_maker(0, "unclosed string literal".to_string()))?;
             if c == '"' {
                 break i + 1;
             }
@@ -322,24 +311,50 @@ impl<'input> Lexer<'input> {
                 self.line += 1;
                 self.line_start = i;
             }
-            if c == '\\' {
-                // escape sequence handling is dealt with later
-                self.chars.next();
-            }
+            let added = if c == '\\' {
+                match self.chars.next().ok_or_else(|| error_maker(i, "expected escaped character after backslash".to_string()))?.1 {
+                    'n' => '\n',
+                    't' => '\t',
+                    '\\' => '\\',
+                    '"' => '"',
+                    '\'' => '\'', // huh? why would we need to escape this?
+                    f@'0'..='9' => {
+                        let (_, s) = self.chars.next().ok_or_else(|| error_maker(i, "expected second escaped number".to_string()))?;
+                        let (_, t) = self.chars.next().ok_or_else(|| error_maker(i, "expected third escaped number".to_string()))?;
+                        if !matches!((s, t), ('0'..='9', '0'..='9')) {
+                            return Err(error_maker(i, "second and third escape characters muts be digits".to_string()));
+                        }
+                        let zero = '0' as u32;
+                        let n = (f as u32 - zero) * 100
+                            + (s as u32 - zero) * 10
+                            + (t as u32 - zero) ;
+                        if n > 255 {
+                            return Err(error_maker(i, format!("illegal escaped character constant: {n}")));
+                        }
+                        // todo: guhH!?
+                        // oat doesn't really support unicode, so should strings just be bytes
+                        // instead?
+                        char::from_u32(n).expect("valid unicode codepoint")
+                    }
+                    c => return Err(error_maker(i, format!("unrecocgnized escape character: '{c}'"))),
+                }
+            } else {
+                c
+            };
+            contents.push(added);
         };
 
-        let contents = escape_string(&self.input[start+1..end-1]);
-        Token {
+        Ok(Token {
             loc: Range { 
                 start: (start_line, start_col),
                 end: (self.line, end - self.line_start),
             },
             kind: TokenKind::String,
             data: TokenData::String(contents.to_string()),
-        }
+        })
     }
 
-    pub fn lex(&mut self) -> Option<Token> {
+    pub fn lex(&mut self) -> Result<Token, LexerError> {
         loop {
             let token = match self.chars.peek().map(|(_, c)| c) {
                 Some(' ' | '\t' | '\n') => {
@@ -425,53 +440,86 @@ impl<'input> Lexer<'input> {
                     }
                     Token::one_line(kind, self.line, i, len, TokenData::None)
                 }
-                Some('0'..='9') => self.integer(),
+                Some('0'..='9') => self.integer()?,
                 Some('a'..='z') => self.ident(),
                 Some('A'..='Z') => self.uident(),
-                Some('"') => self.string(),
+                Some('"') => self.string()?,
                 Some('#') => {
                     let (i, _) = self.chars.peek().unwrap();
-                    if *i == self.line_start {
-                        unimplemented!("directives are unimplemented");
+                    let msg = if *i == self.line_start {
+                        "directives are unimplemented".to_string()
                     } else {
-                        panic!("directives must be the first thing on the line");
-                    }
+                        "directives must be the first thing on the line".to_string()
+                    };
+                    return Err(LexerError {
+                        location: Range {  
+                            start: (self.line, *i),
+                            end: (self.line, i+1),
+                        },
+                        message: msg,
+                    });
                 }
                 Some('/') => {
-                    self.chars.next().unwrap();
-                    self.chars.next().filter(|(_, c)| *c == '*').unwrap();
+                    let (start_col, _) = self.chars.next().unwrap();
+                    let start_line = self.line;
+                    let error_maker = |e_line, e_col, message| LexerError {
+                        location: Range { start: (start_line, start_col), end: (e_line, e_col) },
+                        message,
+                    };
+
+                    self.chars.next().filter(|(_, c)| *c == '*').ok_or_else(|| error_maker(self.line, start_col + 1 - self.line_start, "expected '*' after '/' to start a comment block".to_string()))?;
                     let mut level = 1;
                     while level > 0 {
-                        let (i, c) = self.chars.next().expect("eof while in comment");
+                        let (i1, c) = self.chars.next().ok_or_else(|| error_maker(self.line, start_col + 1 - self.line_start, "uclosed comment".to_string()))?;
                         if c == '*' {
-                            let (_, c2) = self.chars.peek().expect("eof while in comment");
-                            if *c2 == '/' {
+                            let (_, c2) = self.chars.next().ok_or_else(|| error_maker(self.line, i1 - self.line_start, "uclosed comment".to_string()))?;
+                            if c2 == '/' {
                                 level -= 1;
                                 self.chars.next();
                             }
                         } else if c == '/' {
-                            let (_, c2) = self.chars.peek().expect("eof while in comment");
-                            if *c2 == '*' {
+                            let (_, c2) = self.chars.next().ok_or_else(|| error_maker(self.line, i1 - self.line_start, "uclosed comment".to_string()))?;
+                            if c2 == '*' {
                                 level += 1;
                                 self.chars.next();
                             }
                         } else if c == '\n' {
                             self.line += 1;
-                            self.line_start = i;
+                            self.line_start = i1;
                         }
                     }
                     continue;
                 }
-                None => return None,
-                _ => todo!(),
+                None => Token {
+                    kind: TokenKind::Eof,
+                    loc: Range { start: (0, 0), end: (0, 0) },
+                    data: TokenData::None,
+                },
+                Some(_) => {
+                    let (i, c) = self.chars.peek().unwrap();
+                    return Err(LexerError {
+                        location: Range {
+                            start: (self.line, i - self.line_start),
+                            end: (self.line, i + 1- self.line_start),
+                        },
+                        message: format!("unrecognized character {c}"),
+                    });
+                }
             };
 
-            return Some(token);
+            return Ok(token);
         }
     }
 
-    pub fn lex_all(&mut self) -> Vec<Token> {
-        std::iter::from_fn(|| self.lex()).collect()
+    pub fn lex_all(&mut self) -> Result<Vec<Token>, LexerError> {
+        let mut tokens = Vec::new();
+        loop {
+            let t = self.lex()?;
+            if t.kind == TokenKind::Eof {
+                break;
+            }
+            tokens.push(t);
+        }
+        Ok(tokens)
     }
 }
-

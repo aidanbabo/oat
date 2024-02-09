@@ -2,11 +2,8 @@ use std::collections::HashMap;
 use internment::ArenaIntern;
 
 pub type Uid<'arena> = ArenaIntern<'arena, str>;
-
 pub type Gid<'arena> = ArenaIntern<'arena, str>;
-
 pub type Tid<'arena> = ArenaIntern<'arena, str>;
-
 pub type Lbl<'arena> = ArenaIntern<'arena, str>;
 
 #[derive(Clone, Debug, PartialEq)]

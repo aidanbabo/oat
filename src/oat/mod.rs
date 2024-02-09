@@ -68,7 +68,7 @@ impl<T: PartialEq> PartialEq for Node<T> {
 
 pub fn parse(input: &str) -> Result<ast::Prog, Box<dyn std::error::Error>> {
     let mut l = lexer::Lexer::new(input);
-    let tokens = l.lex_all();
+    let tokens = l.lex_all()?;
     let prog = parser::Parser::new(tokens).parse_program()?;
     Ok(prog)
 }
