@@ -668,6 +668,7 @@ impl<'ast> Parser<'ast> {
 mod tests {
     use super::*;
     use ast::*;
+    use internment::Arena;
 
     fn nl<T>(t: T) -> Node<T> {
         Node::no_loc(t)
@@ -689,9 +690,9 @@ mod tests {
         bx(ty(kind))
     }
 
-    fn vd<'ast>(s: &str, exp: Exp<'ast>) -> Vdecl<'ast> {
+    fn vd<'ast>(a: &'ast Arena<str>, s: &str, exp: Exp<'ast>) -> Vdecl<'ast> {
         Vdecl {
-            name: todo!(),
+            name: a.intern(s),
             exp: nl(exp),
         }
     }
@@ -700,261 +701,281 @@ mod tests {
         crate::oat::lexer::Lexer::new(s, a).lex_all().unwrap()
     }
 
-    fn exp_test(s: &str, expected: Node<Exp>) -> Result<(), ParseError> {
+    fn exp_test<F>(s: &str, expected_fn: F) -> Result<(), ParseError>
+    where
+        for<'ast> F: FnOnce(&'ast Arena<str>) -> Node<Exp<'ast>>,
+    {
         let arena = Arena::new();
         let tokens = lex_toks(s, &arena);
         let exp = Parser::new(tokens).parse_exp()?;
-        assert_eq!(exp, expected);
+        assert_eq!(exp, expected_fn(&arena));
         Ok(())
     }
 
-    fn stmt_test(s: &str, expected: Node<Stmt>) -> Result<(), ParseError> {
+    fn stmt_test<F>(s: &str, expected_fn: F) -> Result<(), ParseError>
+    where
+        for<'ast> F: FnOnce(&'ast Arena<str>) -> Node<Stmt<'ast>>,
+    {
         let arena = Arena::new();
         let tokens = lex_toks(s, &arena);
         let stmt = Parser::new(tokens).parse_stmt()?;
-        assert_eq!(stmt, expected);
+        assert_eq!(stmt, expected_fn(&arena));
         Ok(())
     }
 
     #[test]
     fn parse_const_1() -> Result<(), ParseError> {
-        exp_test("bool[] null", nl(Exp::Null(ty(TyKind::Array(bx(ty(TyKind::Bool)))))))
+        exp_test("bool[] null", |_| nl(Exp::Null(ty(TyKind::Array(bx(ty(TyKind::Bool)))))))
     }
 
     #[test]
     fn parse_const_2() -> Result<(), ParseError> {
-        exp_test("42", nl(Exp::Int(42)))
+        exp_test("42", |_| nl(Exp::Int(42)))
     }
 
     #[test]
     fn parse_const_3() -> Result<(), ParseError> {
-        exp_test("true", nl(Exp::Bool(true)))
+        exp_test("true", |_| nl(Exp::Bool(true)))
     }
 
     #[test]
     fn parse_const_4() -> Result<(), ParseError> {
-        exp_test("false", nl(Exp::Bool(false)))
+        exp_test("false", |_| nl(Exp::Bool(false)))
     }
 
     #[test]
     fn parse_const_5() -> Result<(), ParseError> {
-        exp_test("\"hello world\"", nl(Exp::Str("hello world".to_string())))
+        exp_test("\"hello world\"", |arena| nl(Exp::Str(arena.intern("hello world"))))
     }
 
     #[test]
     fn parse_const_6() -> Result<(), ParseError> {
-        exp_test("new int[]{1, 2, 3}", nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(1)), nl(Exp::Int(2)), nl(Exp::Int(3))])))
+        exp_test("new int[]{1, 2, 3}", |_| nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(1)), nl(Exp::Int(2)), nl(Exp::Int(3))])))
     }
 
     #[test]
     fn parse_exp_1() -> Result<(), ParseError> {
-        exp_test("1", nl(Exp::Int(1)))
+        exp_test("1", |_| nl(Exp::Int(1)))
     }
 
     #[test]
     fn parse_exp_2() -> Result<(), ParseError> {
-        exp_test("1+2", nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))))
+        exp_test("1+2", |_| nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))))
     }
 
     #[test]
     fn parse_exp_3() -> Result<(), ParseError> {
-        exp_test("1+2+3", nl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Int(3)))))
+        exp_test("1+2+3", |_| nl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Int(3)))))
     }
 
     #[test]
     fn parse_exp_4() -> Result<(), ParseError> {
-        exp_test("1+2*3", nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))))
+        exp_test("1+2*3", |_| nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))))
     }
 
     #[test]
     fn parse_exp_5() -> Result<(), ParseError> {
-        exp_test("1+(2+3)", nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))))
+        exp_test("1+(2+3)", |_| nl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))))
     }
 
     #[test]
     fn parse_exp_6() -> Result<(), ParseError> {
-        exp_test("(1+2)*3", nl(Exp::Bop(Binop::Mul, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Int(3)))))
+        exp_test("(1+2)*3", |_| nl(Exp::Bop(Binop::Mul, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Int(3)))))
     }
 
     #[test]
     fn parse_exp_7() -> Result<(), ParseError> {
-        exp_test("1+2*3+4", nl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Int(4)))))
+        exp_test("1+2*3+4", |_| nl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Int(4)))))
     }
 
     #[test]
     fn parse_exp_8() -> Result<(), ParseError> {
-        exp_test("1-2 == 3+4", nl(Exp::Bop(Binop::Eq, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(3)), bnl(Exp::Int(4)))))))
+        exp_test("1-2 == 3+4", |_| nl(Exp::Bop(Binop::Eq, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(3)), bnl(Exp::Int(4)))))))
     }
 
     #[test]
     fn parse_exp_9() -> Result<(), ParseError> {
-        exp_test("(1+2)*(3+4)", nl(Exp::Bop(Binop::Mul, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(3)), bnl(Exp::Int(4)))))))
+        exp_test("(1+2)*(3+4)", |_| nl(Exp::Bop(Binop::Mul, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(3)), bnl(Exp::Int(4)))))))
     }
 
     #[test]
     fn parse_exp_10() -> Result<(), ParseError> {
-        exp_test("true & true | false", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))), bnl(Exp::Bool(false)))))
+        exp_test("true & true | false", |_| nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))), bnl(Exp::Bool(false)))))
     }
 
     #[test]
     fn parse_exp_11() -> Result<(), ParseError> {
-        exp_test("true & (true | false)", nl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bool(true)), bnl(Exp::Bool(false)))))))
+        exp_test("true & (true | false)", |_| nl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bool(true)), bnl(Exp::Bool(false)))))))
     }
 
     #[test]
     fn parse_exp_12() -> Result<(), ParseError> {
-        exp_test("!(~5 == ~6) & -5+10 < 0", nl(Exp::Bop(Binop::And, bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Bop(Binop::Eq, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(5)))), bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(6)))))))), bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Add, bnl(Exp::Uop(Unop::Neg, bnl(Exp::Int(5)))), bnl(Exp::Int(10)))), bnl(Exp::Int(0)))))))
+        exp_test("!(~5 == ~6) & -5+10 < 0", |_| nl(Exp::Bop(Binop::And, bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Bop(Binop::Eq, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(5)))), bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(6)))))))), bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Add, bnl(Exp::Uop(Unop::Neg, bnl(Exp::Int(5)))), bnl(Exp::Int(10)))), bnl(Exp::Int(0)))))))
     }
 
     #[test]
     fn parse_exp_13() -> Result<(), ParseError> {
-        exp_test("1+2 >> (3-4 >>> 7*8) << 9", nl(Exp::Bop(Binop::Shl, bnl(Exp::Bop(Binop::Shr, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Sar, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(3)), bnl(Exp::Int(4)))), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(7)), bnl(Exp::Int(8)))))))), bnl(Exp::Int(9)))))
+        exp_test("1+2 >> (3-4 >>> 7*8) << 9", |_| nl(Exp::Bop(Binop::Shl, bnl(Exp::Bop(Binop::Shr, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(1)), bnl(Exp::Int(2)))), bnl(Exp::Bop(Binop::Sar, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(3)), bnl(Exp::Int(4)))), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(7)), bnl(Exp::Int(8)))))))), bnl(Exp::Int(9)))))
     }
 
     #[test]
     fn parse_exp_14() -> Result<(), ParseError> {
-        exp_test("~5 >> 7 - 10 < 9 * -6-4 | !false", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Shr, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(5)))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(7)), bnl(Exp::Int(10)))))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(9)), bnl(Exp::Uop(Unop::Neg, bnl(Exp::Int(6)))))), bnl(Exp::Int(4)))))), bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Bool(false)))))))
+        exp_test("~5 >> 7 - 10 < 9 * -6-4 | !false", |_| nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Shr, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Int(5)))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(7)), bnl(Exp::Int(10)))))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(9)), bnl(Exp::Uop(Unop::Neg, bnl(Exp::Int(6)))))), bnl(Exp::Int(4)))))), bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Bool(false)))))))
     }
 
     #[test]
     fn parse_exp_15() -> Result<(), ParseError> {
-        exp_test("false == 2 >= 3 | true !=  9 - 10 <= 4", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Eq, bnl(Exp::Bool(false)), bnl(Exp::Bop(Binop::Gte, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Bop(Binop::Neq, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Lte, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(9)), bnl(Exp::Int(10)))), bnl(Exp::Int(4)))))))))
+        exp_test("false == 2 >= 3 | true !=  9 - 10 <= 4", |_| nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Eq, bnl(Exp::Bool(false)), bnl(Exp::Bop(Binop::Gte, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Bop(Binop::Neq, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Lte, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(9)), bnl(Exp::Int(10)))), bnl(Exp::Int(4)))))))))
     }
 
     #[test]
     fn parse_exp_16() -> Result<(), ParseError> {
-        exp_test("1-2*3+4 < 5 | 6+7-2 > 1 | true & false", nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Int(4)))), bnl(Exp::Int(5)))), bnl(Exp::Bop(Binop::Gt, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(6)), bnl(Exp::Int(7)))), bnl(Exp::Int(2)))), bnl(Exp::Int(1)))))), bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(false)))))))
+        exp_test("1-2*3+4 < 5 | 6+7-2 > 1 | true & false", |_| nl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Bop(Binop::Add, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Int(1)), bnl(Exp::Bop(Binop::Mul, bnl(Exp::Int(2)), bnl(Exp::Int(3)))))), bnl(Exp::Int(4)))), bnl(Exp::Int(5)))), bnl(Exp::Bop(Binop::Gt, bnl(Exp::Bop(Binop::Sub, bnl(Exp::Bop(Binop::Add, bnl(Exp::Int(6)), bnl(Exp::Int(7)))), bnl(Exp::Int(2)))), bnl(Exp::Int(1)))))), bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(false)))))))
     }
 
     #[test]
     fn parse_exp_17() -> Result<(), ParseError> {
-        exp_test("true [&] false | false [|] true & true", nl(Exp::Bop(Binop::IOr, bnl(Exp::Bop(Binop::IAnd, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bool(false)), bnl(Exp::Bool(false)))))), bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))))))
+        exp_test("true [&] false | false [|] true & true", |_| nl(Exp::Bop(Binop::IOr, bnl(Exp::Bop(Binop::IAnd, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bool(false)), bnl(Exp::Bool(false)))))), bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))))))
     }
 
     #[test]
     fn parse_exp_18() -> Result<(), ParseError> {
-        exp_test("true [|] false [&] true & true | false", nl(Exp::Bop(Binop::IOr, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::IAnd, bnl(Exp::Bool(false)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))), bnl(Exp::Bool(false)))))))))
+        exp_test("true [|] false [&] true & true | false", |_| nl(Exp::Bop(Binop::IOr, bnl(Exp::Bool(true)), bnl(Exp::Bop(Binop::IAnd, bnl(Exp::Bool(false)), bnl(Exp::Bop(Binop::Or, bnl(Exp::Bop(Binop::And, bnl(Exp::Bool(true)), bnl(Exp::Bool(true)))), bnl(Exp::Bool(false)))))))))
     }
 
     #[test]
     fn parse_exp_19() -> Result<(), ParseError> {
-        exp_test("new int[3]", nl(Exp::ArrLen(ty(TyKind::Int), bnl(Exp::Int(3)))))
+        exp_test("new int[3]", |_| nl(Exp::ArrLen(ty(TyKind::Int), bnl(Exp::Int(3)))))
     }
 
     #[test]
     fn parse_exp_20() -> Result<(), ParseError> {
-        exp_test("bar (x, \"cis341\")", nl(Exp::Call(bnl(Exp::Id("bar".to_string())), vec![nl(Exp::Id("x".to_string())), nl(Exp::Str("cis341".to_string()))])))
+        exp_test("bar (x, \"cis341\")", |a| nl(Exp::Call(bnl(Exp::Id(a.intern("bar"))), vec![nl(Exp::Id(a.intern("x"))), nl(Exp::Str(a.intern("cis341")))])))
     }
 
     #[test]
     fn parse_exp_21() -> Result<(), ParseError> {
-        fn inta_maker(a: i64, b: i64) -> Node<Exp> {
+        fn inta_maker(a: i64, b: i64) -> Node<Exp<'static>> {
             nl(Exp::ArrElems(ty(TyKind::Int), vec![nl(Exp::Int(a)), nl(Exp::Int(b))]))
         }
-        exp_test("new int[][]{new int[]{10,11},new int[]{20,21},new int[]{30,31}}", nl(Exp::ArrElems(ty(TyKind::Array(bty(TyKind::Int))), vec![inta_maker(10, 11), inta_maker(20, 21), inta_maker(30, 31)])))
+        exp_test("new int[][]{new int[]{10,11},new int[]{20,21},new int[]{30,31}}", |_| nl(Exp::ArrElems(ty(TyKind::Array(bty(TyKind::Int))), vec![inta_maker(10, 11), inta_maker(20, 21), inta_maker(30, 31)])))
     }
 
     #[test]
     fn parse_exp_22() -> Result<(), ParseError> {
-        exp_test("proc1 ()", nl(Exp::Call(bnl(Exp::Id("proc1".to_string())), vec![])))
+        exp_test("proc1 ()", |a| nl(Exp::Call(bnl(Exp::Id(a.intern("proc1"))), vec![])))
     }
 
     #[test]
     fn parse_exp_23() -> Result<(), ParseError> {
-        exp_test("array[0]", nl(Exp::Index(bnl(Exp::Id("array".to_string())), bnl(Exp::Int(0)))))
+        exp_test("array[0]", |a| nl(Exp::Index(bnl(Exp::Id(a.intern("array"))), bnl(Exp::Int(0)))))
     }
 
     #[test]
     fn parse_exp_24() -> Result<(), ParseError> {
-        exp_test("i + y[1][1]", nl(Exp::Bop(Binop::Add, bnl(Exp::Id("i".to_string())), bnl(Exp::Index(bnl(Exp::Index(bnl(Exp::Id("y".to_string())), bnl(Exp::Int(1)))), bnl(Exp::Int(1)))))))
+        exp_test("i + y[1][1]", |a| nl(Exp::Bop(Binop::Add, bnl(Exp::Id(a.intern("i"))), bnl(Exp::Index(bnl(Exp::Index(bnl(Exp::Id(a.intern("y"))), bnl(Exp::Int(1)))), bnl(Exp::Int(1)))))))
     }
 
     #[test]
     fn parse_exp_25() -> Result<(), ParseError> {
-        exp_test("-!~x[0][0]", nl(Exp::Uop(Unop::Neg, bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Index(bnl(Exp::Index(bnl(Exp::Id("x".to_string())), bnl(Exp::Int(0)))), bnl(Exp::Int(0)))))))))))
+        exp_test("-!~x[0][0]", |a| nl(Exp::Uop(Unop::Neg, bnl(Exp::Uop(Unop::LogNot, bnl(Exp::Uop(Unop::BitNot, bnl(Exp::Index(bnl(Exp::Index(bnl(Exp::Id(a.intern("x"))), bnl(Exp::Int(0)))), bnl(Exp::Int(0)))))))))))
     }
 
     #[test]
     fn parse_exp_26() -> Result<(), ParseError> {
-        exp_test("print_string (string_concat (str1, str2))", nl(Exp::Call(bnl(Exp::Id("print_string".to_string())), vec![nl(Exp::Call(bnl(Exp::Id("string_concat".to_string())), vec![nl(Exp::Id("str1".to_string())), nl(Exp::Id("str2".to_string()))]))])))
+        exp_test("print_string (string_concat (str1, str2))", |a| nl(Exp::Call(bnl(Exp::Id(a.intern("print_string"))), vec![nl(Exp::Call(bnl(Exp::Id(a.intern("string_concat"))), vec![nl(Exp::Id(a.intern("str1"))), nl(Exp::Id(a.intern("str2")))]))])))
     }
 
     #[test]
     fn parse_stmt_1() -> Result<(), ParseError> {
-        stmt_test("var n = 8;", nl(Stmt::Decl(vd("n", Exp::Int(8)))))
+        stmt_test("var n = 8;", |a| nl(Stmt::Decl(vd(a, "n", Exp::Int(8)))))
     }
 
     #[test]
     fn parse_stmt_2() -> Result<(), ParseError> {
-        stmt_test("var x=a[0];", nl(Stmt::Decl(vd("x", Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Int(0)))))))
+        stmt_test("var x=a[0];", |a| nl(Stmt::Decl(vd(a, "x", Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Int(0)))))))
     }
 
     #[test]
     fn parse_stmt_3() -> Result<(), ParseError> {
-        stmt_test("return;", nl(Stmt::Ret(None)))
+        stmt_test("return;", |_| nl(Stmt::Ret(None)))
     }
 
     #[test]
     fn parse_stmt_4() -> Result<(), ParseError> {
-        stmt_test("return x+y;", nl(Stmt::Ret(Some(nl(Exp::Bop(Binop::Add, bnl(Exp::Id("x".to_string())), bnl(Exp::Id("y".to_string()))))))))
+        stmt_test("return x+y;", |a| nl(Stmt::Ret(Some(nl(Exp::Bop(Binop::Add, bnl(Exp::Id(a.intern("x"))), bnl(Exp::Id(a.intern("y")))))))))
     }
 
     #[test]
     fn parse_stmt_5() -> Result<(), ParseError> {
-        stmt_test("a[j>>1]=v;", nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Bop(Binop::Shr, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1)))))), nl(Exp::Id("v".to_string())))))
+        stmt_test("a[j>>1]=v;", |a| nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Bop(Binop::Shr, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Int(1)))))), nl(Exp::Id(a.intern("v"))))))
     }
 
     #[test]
     fn parse_stmt_6() -> Result<(), ParseError> {
-        stmt_test("foo(a,1,n);", nl(Stmt::Call(nl(Exp::Id("foo".to_string())), vec![nl(Exp::Id("a".to_string())), nl(Exp::Int(1)), nl(Exp::Id("n".to_string()))])))
+        stmt_test("foo(a,1,n);", |a| nl(Stmt::Call(nl(Exp::Id(a.intern("foo"))), vec![nl(Exp::Id(a.intern("a"))), nl(Exp::Int(1)), nl(Exp::Id(a.intern("n")))])))
     }
 
     #[test]
     fn parse_stmt_7() -> Result<(), ParseError> {
-        stmt_test("a[i]=a[i>>1];", nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Id("i".to_string())))), nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Bop(Binop::Shr, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1)))))))))
+        stmt_test("a[i]=a[i>>1];", |a| nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Id(a.intern("i"))))), nl(Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Bop(Binop::Shr, bnl(Exp::Id(a.intern("i"))), bnl(Exp::Int(1)))))))))
     }
 
     #[test]
     fn parse_stmt_8() -> Result<(), ParseError> {
-        stmt_test("var a = new int[8];", nl(Stmt::Decl(vd("a", Exp::ArrLen(ty(TyKind::Int), bnl(Exp::Int(8)))))))
+        stmt_test("var a = new int[8];", |a| nl(Stmt::Decl(vd(a, "a", Exp::ArrLen(ty(TyKind::Int), bnl(Exp::Int(8)))))))
     }
 
     #[test]
     fn parse_stmt_9() -> Result<(), ParseError> {
-        stmt_test("if((j<n)&(a[j]<a[j+1])) { j=j+1; }", nl(Stmt::If(nl(Exp::Bop(Binop::And, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Id("j".to_string())), bnl(Exp::Id("n".to_string())))), bnl(Exp::Bop(Binop::Lt, bnl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Id("j".to_string())))), bnl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Bop(Binop::Add, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1)))))))))), vec![nl(Stmt::Assn(nl(Exp::Id("j".to_string())), nl(Exp::Bop(Binop::Add, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1))))))], vec![])))
+        stmt_test("if((j<n)&(a[j]<a[j+1])) { j=j+1; }", |a| nl(Stmt::If(nl(Exp::Bop(Binop::And, bnl(Exp::Bop(Binop::Lt, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Id(a.intern("n"))))), bnl(Exp::Bop(Binop::Lt, bnl(Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Id(a.intern("j"))))), bnl(Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Bop(Binop::Add, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Int(1)))))))))), vec![nl(Stmt::Assn(nl(Exp::Id(a.intern("j"))), nl(Exp::Bop(Binop::Add, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Int(1))))))], vec![])))
     }
 
     #[test]
     fn parse_stmt_10() -> Result<(), ParseError> {
-        fn decl(s: &str) -> Node<Stmt> {
-            nl(Stmt::Decl(vd(s, Exp::Int(0))))
+        fn decl<'ast>(a: &'ast Arena<str>, s: &str) -> Node<Stmt<'ast>> {
+            nl(Stmt::Decl(vd(a, s, Exp::Int(0))))
         }
-        stmt_test("if(c == 1) { var i = 0; var j = 0; var k = 0; }", nl(Stmt::If(nl(Exp::Bop(Binop::Eq, bnl(Exp::Id("c".to_string())), bnl(Exp::Int(1)))), vec![decl("i"), decl("j"), decl("k")], vec![])))
+        stmt_test("if(c == 1) { var i = 0; var j = 0; var k = 0; }", |a| nl(Stmt::If(nl(Exp::Bop(Binop::Eq, bnl(Exp::Id(a.intern("c"))), bnl(Exp::Int(1)))), vec![decl(a, "i"), decl(a, "j"), decl(a, "k")], vec![])))
     }
 
     #[test]
     fn parse_stmt_11() -> Result<(), ParseError> {
-        let ishift = Exp::Bop(Binop::Shr, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1)));
-        let ashift = Exp::Index(bnl(Exp::Id("a".to_string())), bnl(ishift.clone()));
-        stmt_test("while((i>1)&(a[i>>1]<v)) { a[i]=a[i>>1]; i=i>>1; }", nl(Stmt::While(nl(Exp::Bop(Binop::And, bnl(Exp::Bop(Binop::Gt, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1)))), bnl(Exp::Bop(Binop::Lt, bnl(ashift.clone()), bnl(Exp::Id("v".to_string())))))), vec![nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id("a".to_string())), bnl(Exp::Id("i".to_string())))), nl(ashift.clone()))), nl(Stmt::Assn(nl(Exp::Id("i".to_string())), nl(ishift.clone())))])))
+        fn ishift(a: &Arena<str>) -> Exp<'_> {
+            Exp::Bop(Binop::Shr, bnl(Exp::Id(a.intern("i"))), bnl(Exp::Int(1)))
+        }
+        fn ashift(a: &Arena<str>) -> Exp<'_> {
+            Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(ishift(a)))
+        }
+        stmt_test("while((i>1)&(a[i>>1]<v)) { a[i]=a[i>>1]; i=i>>1; }", |a| nl(Stmt::While(nl(Exp::Bop(Binop::And, bnl(Exp::Bop(Binop::Gt, bnl(Exp::Id(a.intern("i"))), bnl(Exp::Int(1)))), bnl(Exp::Bop(Binop::Lt, bnl(ashift(a)), bnl(Exp::Id(a.intern("v"))))))), vec![nl(Stmt::Assn(nl(Exp::Index(bnl(Exp::Id(a.intern("a"))), bnl(Exp::Id(a.intern("i"))))), nl(ashift(a)))), nl(Stmt::Assn(nl(Exp::Id(a.intern("i"))), nl(ishift(a))))])))
     }
 
     #[test]
     fn parse_stmt_12() -> Result<(), ParseError> {
-        fn assn(lhs: Exp, rhs: Exp) -> Node<Stmt> {
+        fn assn<'ast>(lhs: Exp<'ast>, rhs: Exp<'ast>) -> Node<Stmt<'ast>> {
             nl(Stmt::Assn(nl(lhs), nl(rhs)))
         }
-        let nums_i = Exp::Index(bnl(Exp::Id("numbers".to_string())), bnl(Exp::Id("i".to_string())));
-        let nums_j = Exp::Index(bnl(Exp::Id("numbers".to_string())), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1)))));
-        let temp = Exp::Id("temp".to_string());
+        fn nums_i(a: &Arena<str>) -> Exp<'_> {
+            Exp::Index(bnl(Exp::Id(a.intern("numbers"))), bnl(Exp::Id(a.intern("i"))))
+        }
+        fn nums_j(a: &Arena<str>) -> Exp<'_> {
+            Exp::Index(bnl(Exp::Id(a.intern("numbers"))), bnl(Exp::Bop(Binop::Sub, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Int(1)))))
+        }
+        fn temp(a: &Arena<str>) -> Exp<'_> {
+            Exp::Id(a.intern("temp"))
+        }
 
-        let inner_if = nl(Stmt::If(nl(Exp::Bop(Binop::Gt, bnl(nums_j.clone()), bnl(nums_i.clone()))), vec![assn(temp.clone(), nums_j.clone()), assn(nums_j.clone(), nums_i.clone()), assn(nums_i.clone(), temp.clone())], vec![]));
-        let inner_for = nl(Stmt::For(vec![vd("j", Exp::Int(1))], Some(nl(Exp::Bop(Binop::Lte, bnl(Exp::Id("j".to_string())), bnl(Exp::Id("i".to_string()))))), Some(bnl(Stmt::Assn(nl(Exp::Id("j".to_string())), nl(Exp::Bop(Binop::Add, bnl(Exp::Id("j".to_string())), bnl(Exp::Int(1))))))), vec![inner_if]));
-        stmt_test("for (; i > 0; i=i-1;) { for (var j = 1; j <= i; j=j+1;) { if (numbers[j-1] > numbers[i]) { temp = numbers[j-1]; numbers[j-1] = numbers[i]; numbers[i] = temp; } } }", nl(Stmt::For(vec![], Some(nl(Exp::Bop(Binop::Gt, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(0))))), Some(bnl(Stmt::Assn(nl(Exp::Id("i".to_string())), nl(Exp::Bop(Binop::Sub, bnl(Exp::Id("i".to_string())), bnl(Exp::Int(1))))))), vec![inner_for])))
+        fn inner_if(a: &Arena<str>) -> Node<Stmt<'_>> {
+            nl(Stmt::If(nl(Exp::Bop(Binop::Gt, bnl(nums_j(a)), bnl(nums_i(a)))), vec![assn(temp(a), nums_j(a)), assn(nums_j(a), nums_i(a)), assn(nums_i(a), temp(a))], vec![]))
+        }
+        fn inner_for(a: &Arena<str>) -> Node<Stmt<'_>> {
+            nl(Stmt::For(vec![vd(a, "j", Exp::Int(1))], Some(nl(Exp::Bop(Binop::Lte, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Id(a.intern("i")))))), Some(bnl(Stmt::Assn(nl(Exp::Id(a.intern("j"))), nl(Exp::Bop(Binop::Add, bnl(Exp::Id(a.intern("j"))), bnl(Exp::Int(1))))))), vec![inner_if(a)]))
+        }
+        stmt_test("for (; i > 0; i=i-1;) { for (var j = 1; j <= i; j=j+1;) { if (numbers[j-1] > numbers[i]) { temp = numbers[j-1]; numbers[j-1] = numbers[i]; numbers[i] = temp; } } }", |a| nl(Stmt::For(vec![], Some(nl(Exp::Bop(Binop::Gt, bnl(Exp::Id(a.intern("i"))), bnl(Exp::Int(0))))), Some(bnl(Stmt::Assn(nl(Exp::Id(a.intern("i"))), nl(Exp::Bop(Binop::Sub, bnl(Exp::Id(a.intern("i"))), bnl(Exp::Int(1))))))), vec![inner_for(a)])))
     }
 
     #[test]
     fn parse_stmt_13() -> Result<(), ParseError> {
-        stmt_test("for (var i = 0, var j = 0; ;) { }", nl(Stmt::For(vec![vd("i", Exp::Int(0)), vd("j", Exp::Int(0))], None, None, vec![])))
+        stmt_test("for (var i = 0, var j = 0; ;) { }", |a| nl(Stmt::For(vec![vd(a, "i", Exp::Int(0)), vd(a, "j", Exp::Int(0))], None, None, vec![])))
     }
 }
