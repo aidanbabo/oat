@@ -148,7 +148,7 @@ impl<'ast> Parser<'ast> {
             let decl = match t.kind {
                 TokenKind::Global => {
                     let start = self.consume().unwrap().loc;
-                    let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+                    let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
                     self.assert_next_is(TokenKind::Eq)?;
                     let init = self.parse_exp()?; // todo: validate for gexp
                     let end = self.assert_next_is(TokenKind::Semi)?.loc;
@@ -161,7 +161,7 @@ impl<'ast> Parser<'ast> {
                 },
                 TokenKind::Struct => {
                     let start = self.consume().unwrap().loc;
-                    let TokenData::String(name) = self.assert_next_is(TokenKind::UIdent)?.data.clone() else { unreachable!() };
+                    let TokenData::String(name) = self.assert_next_is(TokenKind::UIdent)?.data else { unreachable!() };
                     self.assert_next_is(TokenKind::LBrace)?;
                     let (fields, end) = self.parse_separated(Parser::parse_field_decl, TokenKind::Semi, TokenKind::RBrace)?;
                     let tdecl = ast::Tdecl {
@@ -174,7 +174,7 @@ impl<'ast> Parser<'ast> {
                 _ => {
                     let start = t.loc;
                     let ret_ty = self.parse_ret_type()?;
-                    let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+                    let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
                     self.assert_next_is(TokenKind::LParen)?;
                     let (args, _) = self.parse_separated(Parser::parse_type_and_ident, TokenKind::Comma, TokenKind::RParen)?;
                     let (body, end) = self.parse_block()?;
@@ -204,7 +204,7 @@ impl<'ast> Parser<'ast> {
 
     fn parse_type_and_ident(&mut self) -> ParseResult<(ast::Ty<'ast>, ast::Ident<'ast>)> {
         let ty = self.parse_type()?;
-        let TokenData::String(ident) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+        let TokenData::String(ident) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
         Ok((ty, ident))
     }
 
@@ -324,7 +324,7 @@ impl<'ast> Parser<'ast> {
             TokenKind::Ifq => {
                 self.assert_next_is(TokenKind::LParen)?;
                 let ref_ty = self.parse_ref_type()?;
-                let TokenData::String(id) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+                let TokenData::String(id) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
                 self.assert_next_is(TokenKind::Eq)?;
                 let exp = self.parse_exp()?;
                 self.assert_next_is(TokenKind::RParen)?;
@@ -350,7 +350,7 @@ impl<'ast> Parser<'ast> {
 
     fn parse_vdecl(&mut self) -> ParseResult<Node<ast::Vdecl<'ast>>> {
         let start = self.consume().unwrap().loc;
-        let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
+        let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
         self.assert_next_is(TokenKind::Eq)?;
         let exp = self.parse_exp()?;
         let loc = Range::merge(start, exp.loc);
@@ -381,7 +381,7 @@ impl<'ast> Parser<'ast> {
             if precedence > next_precedence {
                 break;
             }
-            let next_token = self.consume().unwrap().clone();
+            let next_token = self.consume().unwrap();
             lhs = match next_token.kind {
                 TokenKind::LParen => self.parse_call(lhs, next_token)?,
                 TokenKind::LBracket => self.parse_index(lhs, next_token)?,
@@ -399,7 +399,7 @@ impl<'ast> Parser<'ast> {
 
     fn parse_field_exp(&mut self) -> ParseResult<(ast::Ident<'ast>, Node<ast::Exp<'ast>>)> {
         let name = self.assert_next_is(TokenKind::Ident)?;
-        let TokenData::String(name) = name.data.clone() else { unreachable!() };
+        let TokenData::String(name) = name.data else { unreachable!() };
         self.assert_next_is(TokenKind::Eq)?;
         let exp = self.parse_exp()?;
         Ok((name, exp))
@@ -417,7 +417,7 @@ impl<'ast> Parser<'ast> {
         // new int[3]{ i -> i * i }
         self.consume();
         let ident = self.assert_next_is(TokenKind::Ident)?;
-        let TokenData::String(name) = ident.data.clone() else { unreachable!() };
+        let TokenData::String(name) = ident.data else { unreachable!() };
         self.assert_next_is(TokenKind::Arrow)?;
         let exp = self.parse_exp()?;
         let rbrace_loc = self.assert_next_is(TokenKind::RBrace)?.loc;
@@ -491,7 +491,7 @@ impl<'ast> Parser<'ast> {
         let field = self.assert_next_is(TokenKind::Ident)?;
         let TokenData::String(field_name) = &field.data else { unreachable!() };
         let loc = Range::merge(lhs.loc, field.loc);
-        Ok(Node { loc, t: ast::Exp::Proj(Box::new(lhs), field_name.clone()) })
+        Ok(Node { loc, t: ast::Exp::Proj(Box::new(lhs), *field_name) })
     }
 
     // todo: this may also be a null function type (e.g. ()->int null)
@@ -506,13 +506,13 @@ impl<'ast> Parser<'ast> {
     fn parse_ident(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let ident = self.consume().unwrap();
         let TokenData::String(s) = &ident.data else { unreachable!() };
-        Ok(Node { loc: ident.loc, t: ast::Exp::Id(s.clone()) })
+        Ok(Node { loc: ident.loc, t: ast::Exp::Id(*s) })
     }
 
     fn parse_string_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let string_lit = self.consume().unwrap();
         let TokenData::String(s) = &string_lit.data else { unreachable!() };
-        Ok(Node { loc: string_lit.loc, t: ast::Exp::Str(s.clone()) })
+        Ok(Node { loc: string_lit.loc, t: ast::Exp::Str(*s) })
     }
 
     fn parse_bool_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
@@ -532,7 +532,7 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_unary(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let unop_token = self.consume().unwrap().clone();
+        let unop_token = self.consume().unwrap();
 
         let exp = self.parse_precedence(Precedence::Unary)?;
         let unop = match unop_token.kind {
@@ -594,7 +594,7 @@ impl<'ast> Parser<'ast> {
             Some(TokenKind::UIdent) => {
                 let t = self.consume().unwrap();
                 let TokenData::String(name) = &t.data else { unreachable!() };
-                ast::Ty::non_nullable(ast::TyKind::Struct(name.clone()))
+                ast::Ty::non_nullable(ast::TyKind::Struct(*name))
             }
             Some(TokenKind::LParen) => {
                 self.consume();

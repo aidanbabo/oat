@@ -130,7 +130,7 @@ fn gexp<'ast>(e: &Exp<'ast>, ctx: &Context<'ast>) -> Result<Ty<'ast>, TypeError>
                 }
             }
 
-            Ty { nullable: false, kind: TyKind::Struct(name.clone()) }
+            Ty { nullable: false, kind: TyKind::Struct(*name) }
 
         }
         _ => unreachable!(),
@@ -208,7 +208,7 @@ fn exp<'ast>(e: &Exp<'ast>, locals: &HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Conte
                 return Err(TypeError("array length must be an int".to_string()));
             }
             let mut init_locals = locals.clone();
-            if let Some(_existing_binding) = init_locals.insert(name.clone(), int_ty) {
+            if let Some(_existing_binding) = init_locals.insert(*name, int_ty) {
                 // todo: not really a type error now is it
                 return Err(TypeError("there is already a binding for this variable".to_string()));
             }
@@ -262,7 +262,7 @@ fn exp<'ast>(e: &Exp<'ast>, locals: &HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Conte
                 }
             }
 
-            Ty { nullable: false, kind: TyKind::Struct(name.clone()) }
+            Ty { nullable: false, kind: TyKind::Struct(*name) }
         }
         Exp::Proj(e, field_name) => {
             let lhs_ty = exp(e, locals, ctx, false)?;
@@ -316,7 +316,7 @@ fn vdecl<'ast>(vd: &Vdecl<'ast>, locals: &mut HashMap<Ident<'ast>, Ty<'ast>>, ct
     if ty == (Ty { nullable: false, kind: TyKind::Void }) {
         return Err(TypeError("cannot declare variable of void type".to_string()));
     }
-    if let Some(_existing_binding) = locals.insert(vd.name.clone(), ty) {
+    if let Some(_existing_binding) = locals.insert(vd.name, ty) {
         // todo: not really a type error now is it
         return Err(TypeError("there is already a binding for this variable".to_string()));
     }
@@ -378,7 +378,7 @@ fn stmt<'ast>(s: &Stmt<'ast>, ret_ty: &Ty<'ast>, locals: &mut HashMap<Ident<'ast
             }
 
             let mut if_locals = locals.clone();
-            if let Some(_existing_binding) = if_locals.insert(name.clone(), ty.clone()) {
+            if let Some(_existing_binding) = if_locals.insert(*name, ty.clone()) {
                 // todo: not really a type error now is it
                 return Err(TypeError("there is already a binding for this variable".to_string()));
             }
@@ -432,7 +432,7 @@ fn block<'ast>(b: &Block<'ast>, ret_ty: &Ty<'ast>, locals: &mut HashMap<Ident<'a
 }
 
 fn function_body<'ast>(f: &Fdecl<'ast>, ctx: &Context<'ast>) -> Result<(), TypeError> {
-    let mut locals: HashMap<Ident, Ty> = f.args.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
+    let mut locals: HashMap<Ident, Ty> = f.args.iter().map(|(t, n)| (*n, t.clone())).collect();
 
     let returns = block(&f.body, &f.ret_ty, &mut locals, ctx)?;
 
@@ -455,7 +455,7 @@ fn type_decl_verify<'ast>(t: &Tdecl<'ast>, ctx: &Context<'ast>) -> Result<(), Ty
 }
 
 fn global<'ast>(g: &Gdecl<'ast>, ctx: &Context<'ast>) -> Result<(Ident<'ast>, Ty<'ast>), TypeError> {
-    Ok((g.name.clone(), gexp(&g.init, ctx)?))
+    Ok((g.name, gexp(&g.init, ctx)?))
 }
 
 fn function_header<'ast>(f: &Fdecl<'ast>) -> Result<(Ident<'ast>, Ty<'ast>), TypeError> {
@@ -466,11 +466,11 @@ fn function_header<'ast>(f: &Fdecl<'ast>) -> Result<(Ident<'ast>, Ty<'ast>), Typ
     }
 
     let ty = Ty { nullable: false, kind: TyKind::Fun(f.args.iter().map(|(t, _)| t).cloned().collect(), Box::new(f.ret_ty.clone())) };
-    Ok((f.name.clone(), ty))
+    Ok((f.name, ty))
 }
 
 fn type_decl<'ast>(t: &Tdecl<'ast>) -> Result<Vec<(Ty<'ast>, Ident<'ast>)>, TypeError> {
-    let fields: Vec<_> = t.fields.iter().map(|f| (f.ty.clone(), f.name.clone())).collect();
+    let fields: Vec<_> = t.fields.iter().map(|f| (f.ty.clone(), f.name)).collect();
     let distinct_fields: HashSet<_> = t.fields.iter().map(|f| &f.name).collect();
     if fields.len() != distinct_fields.len() {
         return Err(TypeError("duplicate struct field".to_string()));
@@ -485,7 +485,7 @@ pub fn check<'ast>(prog: &Prog<'ast>, arena: &'ast Arena<str>) -> Result<Context
     for decl in prog {
         if let Decl::Type(t) = decl {
             let fields = type_decl(t)?;
-            if structs.insert(t.name.clone(), fields).is_some() {
+            if structs.insert(t.name, fields).is_some() {
                 return Err(TypeError(format!("a struct with name {} already exists", t.name)));
             }
         }

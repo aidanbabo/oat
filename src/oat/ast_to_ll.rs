@@ -85,7 +85,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             (n, pairs)
         }).collect();
         // todo: even dumber lmao
-        ctx.ll_to_oat_structs = ctx.structs.iter().map(|(oname, _)| (arena.intern(oname), *oname)).collect();
+        ctx.ll_to_oat_structs = ctx.structs.keys().map(|oname| (arena.intern(oname), *oname)).collect();
 
         ctx.llprog.edecls.push((arena.intern("oat_assert_array_length"), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push((arena.intern("oat_alloc_array"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
@@ -193,7 +193,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
         let (ty, op) = self.gexp(v.init.t, v.name.to_string());
         let interned = self.arena.intern(&v.name);
         self.llprog.gdecls.push((interned, (ty.clone(), op)));
-        assert!(self.globals.insert(v.name.clone(), (interned, ty)).is_none());
+        assert!(self.globals.insert(v.name, (interned, ty)).is_none());
     }
 
     fn global_string(&mut self, name: &str, mut s: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
@@ -212,7 +212,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
         let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (self.tipe(t), n)).unzip();
 
         let ty_fun = llast::Ty::Fun(arg_tys, Box::new(ret_ty));
-        assert!(self.globals.insert(func.name.clone(), (self.arena.intern(&func.name), ty_fun)).is_none());
+        assert!(self.globals.insert(func.name, (self.arena.intern(&func.name), ty_fun)).is_none());
     }
 
     fn function(&mut self, func: oast::Fdecl<'oat>) {
@@ -440,7 +440,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
         let alloca = llast::Insn::Alloca(ty.clone());
         let alloca_uid = self.gensym(&d.name);
         fun_ctx.cfg.entry.insns.push((alloca_uid, alloca));
-        fun_ctx.locals.insert(d.name.clone(), (alloca_uid, ty.clone()));
+        fun_ctx.locals.insert(d.name, (alloca_uid, ty.clone()));
         fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty.clone(), exp_uid, llast::Operand::Id(alloca_uid)));
     }
 
@@ -667,9 +667,6 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 } else if let Some((ptr_gid, ty)) = self.globals.get(&id) {
                     (llast::Operand::Gid(*ptr_gid), ty.clone())
                 } else {
-                    println!("id: {id:?}");
-                    println!("locals: {:?}", fun_ctx.locals);
-                    println!("globals: {:?}", self.globals);
                     unreachable!()
                 }
             }
