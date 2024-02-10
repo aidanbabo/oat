@@ -1,11 +1,13 @@
-use super::Range;
+use once_cell::sync::Lazy;
+use internment::{Arena, ArenaIntern};
 
 use std::iter::Peekable;
 use std::str::CharIndices;
 use std::collections::HashMap;
 
-use once_cell::sync::Lazy;
+use super::Range;
 
+// bloom filter ? (oooooo aaaaaaa)
 static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
     let mut m = HashMap::new();
     m.insert("struct", TokenKind::Struct);
@@ -35,11 +37,11 @@ pub struct LexerError {
     message: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct Token {
+#[derive(Clone, Copy, Debug)]
+pub struct Token<'output> {
     pub loc: Range,
     pub kind: TokenKind,
-    pub data: TokenData,
+    pub data: TokenData<'output>,
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -152,15 +154,15 @@ pub enum TokenKind {
     Question,
 }
 
-#[derive(Clone, Debug)]
-pub enum TokenData {
+#[derive(Clone, Copy, Debug)]
+pub enum TokenData<'output> {
     Int(i64),
-    String(String),
+    String(ArenaIntern<'output, str>),
     None,
 }
 
-impl Token {
-    fn one_line(kind: TokenKind, line: usize, start: usize, len: usize, data: TokenData) -> Token {
+impl<'output> Token<'output> {
+    fn one_line(kind: TokenKind, line: usize, start: usize, len: usize, data: TokenData<'output>) -> Token {
         Token {
             loc: Range { 
                 start: (line, start),
@@ -172,29 +174,31 @@ impl Token {
     }
 }
 
-pub struct Lexer<'input> {
+pub struct Lexer<'input, 'output> {
     input: &'input str,
     line: usize,
     line_start: usize,
     chars: Peekable<CharIndices<'input>>,
+    arena: &'output Arena<str>,
 }
 
-impl<'input> Lexer<'input> {
-    pub fn new(input: &'input str) -> Self {
+impl<'input, 'output> Lexer<'input, 'output> {
+    pub fn new(input: &'input str, arena: &'output Arena<str>) -> Self {
         Self {
             input,
             line: 1,
             line_start: 0,
             chars: input.char_indices().peekable(),
+            arena,
         }
     }
 
-    fn single(&mut self, kind: TokenKind) -> Token {
+    fn single(&mut self, kind: TokenKind) -> Token<'static> {
         let (i, _) = self.chars.next().unwrap();
         Token::one_line(kind, self.line, i - self.line_start, 1, TokenData::None)
     }
 
-    fn maybe_double(&mut self, single_kind: TokenKind, second_char: char, double_kind: TokenKind) -> Token {
+    fn maybe_double(&mut self, single_kind: TokenKind, second_char: char, double_kind: TokenKind) -> Token<'static> {
         let (i, _) = self.chars.next().unwrap();
         let (kind, len) = match self.chars.peek() {
             Some((_, c)) if second_char == *c => {
@@ -207,7 +211,7 @@ impl<'input> Lexer<'input> {
         Token::one_line(kind, self.line, i - self.line_start, len, TokenData::None)
     }
 
-    fn integer(&mut self) -> Result<Token, LexerError> {
+    fn integer(&mut self) -> Result<Token<'static>, LexerError> {
         let (start, c0) = self.chars.next().unwrap();
         let mut end = start;
         let mut hex = false;
@@ -263,13 +267,13 @@ impl<'input> Lexer<'input> {
         (start, end)
     }
 
-    fn uident(&mut self) -> Token {
+    fn uident(&mut self) -> Token<'output> {
         let (start, end) = self.any_ident();
         let s = &self.input[start..end];
-        Token::one_line(TokenKind::UIdent, self.line, start - self.line_start, end - start, TokenData::String(s.to_string()))
+        Token::one_line(TokenKind::UIdent, self.line, start - self.line_start, end - start, TokenData::String(self.arena.intern(s)))
     }
 
-    fn ident(&mut self) -> Token {
+    fn ident(&mut self) -> Token<'output> {
         let (start, mut end) = self.any_ident();
         let s = &self.input[start..end];
         let (kind, data) = if let Some(kind) = KEYWORDS.get(s) {
@@ -283,12 +287,12 @@ impl<'input> Lexer<'input> {
             };
             (k, TokenData::None)
         } else {
-            (TokenKind::Ident, TokenData::String(s.to_string()))
+            (TokenKind::Ident, TokenData::String(self.arena.intern(s)))
         };
         Token::one_line(kind, self.line, start - self.line_start, end - start, data)
     }
 
-    fn string(&mut self) -> Result<Token, LexerError> {
+    fn string(&mut self) -> Result<Token<'output>, LexerError> {
         let (start, _) = self.chars.next().unwrap();
         let start_line = self.line;
         let start_col = start - self.line_start;
@@ -350,11 +354,11 @@ impl<'input> Lexer<'input> {
                 end: (self.line, end - self.line_start),
             },
             kind: TokenKind::String,
-            data: TokenData::String(contents.to_string()),
+            data: TokenData::String(self.arena.intern_string(contents)),
         })
     }
 
-    pub fn lex(&mut self) -> Result<Token, LexerError> {
+    pub fn lex(&mut self) -> Result<Token<'output>, LexerError> {
         loop {
             let token = match self.chars.peek().map(|(_, c)| c) {
                 Some(' ' | '\t' | '\n') => {
@@ -511,7 +515,7 @@ impl<'input> Lexer<'input> {
         }
     }
 
-    pub fn lex_all(&mut self) -> Result<Vec<Token>, LexerError> {
+    pub fn lex_all(&mut self) -> Result<Vec<Token<'output>>, LexerError> {
         let mut tokens = Vec::new();
         loop {
             let t = self.lex()?;

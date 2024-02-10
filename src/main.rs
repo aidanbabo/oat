@@ -32,8 +32,10 @@ fn main() {
     let ll_arena = Arena::new();
 
     let ll_prog = if ext == "oat" {
+        let oat_arena = Arena::new();
+
         let s = fs::read_to_string(&args.path).unwrap();
-        let prog = match oat::oat::parse(&s) {
+        let prog = match oat::oat::parse(&s, &oat_arena) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e:?}");
@@ -45,7 +47,7 @@ fn main() {
             oat::oat::print(&prog);
         }
 
-        let tctx = match oat::oat::typecheck(&prog) {
+        let tctx = match oat::oat::typecheck(&prog, &oat_arena) {
             Ok(tctx) => tctx,
             Err(e) => {
                 eprintln!("{e:?}");
@@ -57,7 +59,7 @@ fn main() {
             return;
         }
 
-        oat::oat::to_llvm(prog, tctx, &ll_arena)
+        oat::oat::to_llvm(prog, tctx, &ll_arena, &oat_arena)
     } else if ext == "ll" {
         let s = fs::read_to_string(&args.path).unwrap();
         match oat::llvm::parse(&s, &ll_arena) {

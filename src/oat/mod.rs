@@ -66,21 +66,20 @@ impl<T: PartialEq> PartialEq for Node<T> {
     }
 }
 
-pub fn parse(input: &str) -> Result<ast::Prog, Box<dyn std::error::Error>> {
-    let mut l = lexer::Lexer::new(input);
+pub fn parse<'output>(input: &'_ str, arena: &'output Arena<str>) -> Result<ast::Prog<'output>, Box<dyn std::error::Error>> {
+    let mut l = lexer::Lexer::new(input, arena);
     let tokens = l.lex_all()?;
     let prog = parser::Parser::new(tokens).parse_program()?;
     Ok(prog)
 }
 
-pub fn typecheck(prog: &ast::Prog) -> Result<typechecker::Context, typechecker::TypeError> {
-    typechecker::check(prog)
+pub fn typecheck<'ast>(prog: &ast::Prog<'ast>, arena: &'ast Arena<str>) -> Result<typechecker::Context<'ast>, typechecker::TypeError> {
+    typechecker::check(prog, arena)
 }
 
 // doesn't really need owndership of tcx, but lifetimes are a pain
-pub fn to_llvm(oprog: ast::Prog, tcx: typechecker::Context, arena: &Arena<str>) -> llvm::ast::Prog<'_> {
-    let context = ast_to_ll::Context::new(tcx, arena);
-
+pub fn to_llvm<'oat, 'll>(oprog: ast::Prog<'oat>, tcx: typechecker::Context<'oat>, ll_arena: &'ll Arena<str>, oat_arena: &'oat Arena<str>) -> llvm::ast::Prog<'ll> {
+    let context = ast_to_ll::Context::new(tcx, ll_arena, oat_arena);
     context.lower(oprog)
 }
 

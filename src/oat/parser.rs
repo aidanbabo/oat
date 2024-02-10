@@ -82,29 +82,29 @@ fn precedence_of(tk: TokenKind) -> Precedence {
 }
 
 #[derive(Debug)]
-pub struct Parser {
-    tokens: Vec<Token>,
+pub struct Parser<'ast> {
+    tokens: Vec<Token<'ast>>,
     next_token: usize,
 }
 
-impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+impl<'ast> Parser<'ast> {
+    pub fn new(tokens: Vec<Token<'ast>>) -> Self {
         Self {
             tokens,
             next_token: 0,
         }
     }
 
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.next_token)
+    fn peek(&self) -> Option<Token<'ast>> {
+        self.tokens.get(self.next_token).copied()
     }
 
-    fn peek_n(&self, n: usize) -> Option<&Token> {
-        self.tokens.get(self.next_token + n - 1)
+    fn peek_n(&self, n: usize) -> Option<Token<'ast>> {
+        self.tokens.get(self.next_token + n - 1).copied()
     }
 
-    fn consume(&mut self) -> Option<&Token> {
-        let t = self.tokens.get(self.next_token);
+    fn consume(&mut self) -> Option<Token<'ast>> {
+        let t = self.tokens.get(self.next_token).copied();
         if t.is_some() {
             self.next_token += 1;
         }
@@ -116,7 +116,7 @@ impl Parser {
     }
 
     #[track_caller]
-    fn assert_next_is(&mut self, kind: TokenKind) -> ParseResult<&Token> {
+    fn assert_next_is(&mut self, kind: TokenKind) -> ParseResult<Token<'ast>> {
         let Some(t) = self.consume() else { panic!("expected {kind:?} but got eof") };
         if t.kind == kind {
             Ok(t)
@@ -125,7 +125,7 @@ impl Parser {
         }
     }
 
-    fn parse_separated<T>(&mut self, mut parse_fn: impl FnMut(&mut Self) -> ParseResult<T>, sep: TokenKind, end: TokenKind) -> ParseResult<(Vec<T>, &Token)> {
+    fn parse_separated<T>(&mut self, mut parse_fn: impl FnMut(&mut Self) -> ParseResult<T>, sep: TokenKind, end: TokenKind) -> ParseResult<(Vec<T>, Token<'ast>)> {
         let mut v = vec![];
 
         while !self.test_next_is(end) {
@@ -142,7 +142,7 @@ impl Parser {
     }
 
 
-    pub fn parse_program(&mut self) -> ParseResult<ast::Prog> {
+    pub fn parse_program(&mut self) -> ParseResult<ast::Prog<'ast>> {
         let mut decls = vec![];
         while let Some(t) = self.peek() {
             let decl = match t.kind {
@@ -194,7 +194,7 @@ impl Parser {
         Ok(decls)
     }
 
-    fn parse_field_decl(&mut self) -> ParseResult<ast::Field> {
+    fn parse_field_decl(&mut self) -> ParseResult<ast::Field<'ast>> {
         let (ty, name) = self.parse_type_and_ident()?;
         Ok(ast::Field {
             ty,
@@ -202,13 +202,13 @@ impl Parser {
         })
     }
 
-    fn parse_type_and_ident(&mut self) -> ParseResult<(ast::Ty, ast::Ident)> {
+    fn parse_type_and_ident(&mut self) -> ParseResult<(ast::Ty<'ast>, ast::Ident<'ast>)> {
         let ty = self.parse_type()?;
         let TokenData::String(ident) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
         Ok((ty, ident))
     }
 
-    pub fn parse_stmt(&mut self) -> ParseResult<Node<ast::Stmt>> {
+    pub fn parse_stmt(&mut self) -> ParseResult<Node<ast::Stmt<'ast>>> {
         match self.peek().map(|t| t.kind) {
             Some(TokenKind::Var) => {
                 let Node { loc, t: vdecl } = self.parse_vdecl()?;
@@ -289,7 +289,7 @@ impl Parser {
         }
     }
 
-    fn parse_else(&mut self, end: Range) -> ParseResult<(ast::Block, Range)> {
+    fn parse_else(&mut self, end: Range) -> ParseResult<(ast::Block<'ast>, Range)> {
         if !self.test_next_is(TokenKind::Else) {
             return Ok((vec![], end));
         }
@@ -308,7 +308,7 @@ impl Parser {
         }
     }
 
-    fn parse_ifs(&mut self) -> ParseResult<Node<ast::Stmt>> {
+    fn parse_ifs(&mut self) -> ParseResult<Node<ast::Stmt<'ast>>> {
         let iph = self.consume().unwrap();
         let start = iph.loc;
         match iph.kind {
@@ -337,7 +337,7 @@ impl Parser {
         }
     }
 
-    fn parse_block(&mut self) -> ParseResult<(ast::Block, Range)> {
+    fn parse_block(&mut self) -> ParseResult<(ast::Block<'ast>, Range)> {
         self.assert_next_is(TokenKind::LBrace)?;
         let mut stmts = vec![];
         while !self.test_next_is(TokenKind::RBrace) {
@@ -348,7 +348,7 @@ impl Parser {
         Ok((stmts, end))
     }
 
-    fn parse_vdecl(&mut self) -> ParseResult<Node<ast::Vdecl>> {
+    fn parse_vdecl(&mut self) -> ParseResult<Node<ast::Vdecl<'ast>>> {
         let start = self.consume().unwrap().loc;
         let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data.clone() else { unreachable!() };
         self.assert_next_is(TokenKind::Eq)?;
@@ -357,11 +357,11 @@ impl Parser {
         Ok(Node { loc, t: ast::Vdecl { name, exp } })
     }
 
-    pub fn parse_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
+    pub fn parse_exp(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         self.parse_precedence(Precedence::IOr)
     }
 
-    fn parse_precedence(&mut self, precedence: Precedence) -> ParseResult<Node<ast::Exp>> {
+    fn parse_precedence(&mut self, precedence: Precedence) -> ParseResult<Node<ast::Exp<'ast>>> {
         let token = self.peek().expect("expression");
         let mut lhs = match token.kind {
             TokenKind::IntLit => self.parse_int_lit()?,
@@ -397,7 +397,7 @@ impl Parser {
         Ok(lhs)
     }
 
-    fn parse_field_exp(&mut self) -> ParseResult<(ast::Ident, Node<ast::Exp>)> {
+    fn parse_field_exp(&mut self) -> ParseResult<(ast::Ident<'ast>, Node<ast::Exp<'ast>>)> {
         let name = self.assert_next_is(TokenKind::Ident)?;
         let TokenData::String(name) = name.data.clone() else { unreachable!() };
         self.assert_next_is(TokenKind::Eq)?;
@@ -405,7 +405,7 @@ impl Parser {
         Ok((name, exp))
     }
 
-    fn parse_array_helper(&mut self, starting_loc: Range, ty: ast::Ty) -> ParseResult<Node<ast::Exp>> {
+    fn parse_array_helper(&mut self, starting_loc: Range, ty: ast::Ty<'ast>) -> ParseResult<Node<ast::Exp<'ast>>> {
         // new int[3]
         let len = self.parse_exp()?;
         let rbracket_loc = self.assert_next_is(TokenKind::RBracket)?.loc;
@@ -425,7 +425,7 @@ impl Parser {
         Ok(Node { loc, t: ast::Exp::ArrInit(ty, Box::new(len), name, Box::new(exp)) })
     }
 
-    fn parse_new_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_new_exp(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let new_loc = self.consume().unwrap().loc;
         let ty = self.parse_type()?;
         let open = self.consume();
@@ -457,7 +457,7 @@ impl Parser {
         }
     }
 
-    fn parse_length_exp(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_length_exp(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let length_loc = self.consume().unwrap().loc;
         self.assert_next_is(TokenKind::LParen)?;
         let e = self.parse_exp()?;
@@ -466,7 +466,7 @@ impl Parser {
         Ok(Node { loc, t: ast::Exp::Length(Box::new(e)) })
     }
 
-    fn parse_null_ptr(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_null_ptr(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let start_loc = self.peek().unwrap().loc;
         let ty = self.parse_ref_type()?;
         let null = self.assert_next_is(TokenKind::Null)?;
@@ -474,20 +474,20 @@ impl Parser {
         Ok(Node { loc, t: ast::Exp::Null(ty) })
     }
 
-    fn parse_call(&mut self, lhs: Node<ast::Exp>, _: Token) -> ParseResult<Node<ast::Exp>> {
+    fn parse_call(&mut self, lhs: Node<ast::Exp<'ast>>, _: Token) -> ParseResult<Node<ast::Exp<'ast>>> {
         let (args, rparen) = self.parse_separated(Parser::parse_exp, TokenKind::Comma, TokenKind::RParen)?;
         let loc = Range::merge(lhs.loc, rparen.loc);
         Ok(Node { loc, t: ast::Exp::Call(Box::new(lhs), args) })
     }
 
-    fn parse_index(&mut self, lhs: Node<ast::Exp>, _: Token) -> ParseResult<Node<ast::Exp>> {
+    fn parse_index(&mut self, lhs: Node<ast::Exp<'ast>>, _: Token) -> ParseResult<Node<ast::Exp<'ast>>> {
         let index = self.parse_exp()?;
         let rbracket = self.assert_next_is(TokenKind::RBracket)?;
         let loc = Range::merge(lhs.loc, rbracket.loc);
         Ok(Node { loc, t: ast::Exp::Index(Box::new(lhs), Box::new(index)) })
     }
 
-    fn parse_proj(&mut self, lhs: Node<ast::Exp>, _: Token) -> ParseResult<Node<ast::Exp>> {
+    fn parse_proj(&mut self, lhs: Node<ast::Exp<'ast>>, _: Token) -> ParseResult<Node<ast::Exp<'ast>>> {
         let field = self.assert_next_is(TokenKind::Ident)?;
         let TokenData::String(field_name) = &field.data else { unreachable!() };
         let loc = Range::merge(lhs.loc, field.loc);
@@ -495,7 +495,7 @@ impl Parser {
     }
 
     // todo: this may also be a null function type (e.g. ()->int null)
-    fn parse_grouping(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_grouping(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let lparen_loc = self.consume().unwrap().loc;
         let e = self.parse_exp()?;
         let rparen_loc = self.assert_next_is(TokenKind::RParen)?.loc;
@@ -503,19 +503,19 @@ impl Parser {
         Ok(Node { loc, t: e.t })
     }
 
-    fn parse_ident(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_ident(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let ident = self.consume().unwrap();
         let TokenData::String(s) = &ident.data else { unreachable!() };
         Ok(Node { loc: ident.loc, t: ast::Exp::Id(s.clone()) })
     }
 
-    fn parse_string_lit(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_string_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let string_lit = self.consume().unwrap();
         let TokenData::String(s) = &string_lit.data else { unreachable!() };
         Ok(Node { loc: string_lit.loc, t: ast::Exp::Str(s.clone()) })
     }
 
-    fn parse_bool_lit(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_bool_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let bool_lit = self.consume().unwrap();
         let val = match bool_lit.kind {
             TokenKind::True => true,
@@ -525,13 +525,13 @@ impl Parser {
         Ok(Node { loc: bool_lit.loc, t: ast::Exp::Bool(val) })
     }
 
-    fn parse_int_lit(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_int_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let int_lit = self.consume().unwrap();
         let TokenData::Int(val) = int_lit.data else { unreachable!() };
         Ok(Node { loc: int_lit.loc, t: ast::Exp::Int(val) })
     }
 
-    fn parse_unary(&mut self) -> ParseResult<Node<ast::Exp>> {
+    fn parse_unary(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
         let unop_token = self.consume().unwrap().clone();
 
         let exp = self.parse_precedence(Precedence::Unary)?;
@@ -546,7 +546,7 @@ impl Parser {
         Ok(Node { loc, t: ast::Exp::Uop(unop, Box::new(exp)) })
     }
 
-    fn parse_binary(&mut self, lhs: Node<ast::Exp>, binop: Token) -> ParseResult<Node<ast::Exp>> {
+    fn parse_binary(&mut self, lhs: Node<ast::Exp<'ast>>, binop: Token) -> ParseResult<Node<ast::Exp<'ast>>> {
         let binop_kind = binop.kind;
         let rhs_prec = precedence_of(binop_kind);
         let rhs = self.parse_precedence(rhs_prec.next())?;
@@ -573,7 +573,7 @@ impl Parser {
         Ok(Node { loc, t: ast::Exp::Bop(binop, Box::new(lhs), Box::new(rhs)) })
     }
 
-    fn parse_any_type(&mut self) -> ParseResult<ast::Ty> {
+    fn parse_any_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
         let mut t = match self.peek().map(|t| t.kind) {
             Some(TokenKind::TVoid) => {
                 self.consume();
@@ -642,7 +642,7 @@ impl Parser {
         Ok(t)
     }
 
-    fn parse_type(&mut self) -> ParseResult<ast::Ty> {
+    fn parse_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
         let ty = self.parse_any_type()?;
         if ty.kind == ast::TyKind::Void {
             panic!("`void` is not a valid type, it's only valid as a return type");
@@ -650,7 +650,7 @@ impl Parser {
         Ok(ty)
     }
 
-    fn parse_ref_type(&mut self) -> ParseResult<ast::Ty> {
+    fn parse_ref_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
         let ty = self.parse_any_type()?;
         if !ty.kind.is_ref() {
             panic!("expected a reference type, these are strings, arrays, classes, and functions");
@@ -659,7 +659,7 @@ impl Parser {
         Ok(ty)
     }
 
-    fn parse_ret_type(&mut self) -> ParseResult<ast::Ty> {
+    fn parse_ret_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
         self.parse_any_type()
     }
 }
@@ -681,34 +681,36 @@ mod tests {
         bx(nl(t))
     }
 
-    fn ty(kind: TyKind) -> Ty {
+    fn ty(kind: TyKind<'_>) -> Ty<'_> {
         Ty { nullable: false, kind }
     }
 
-    fn bty(kind: TyKind) -> Box<Ty> {
+    fn bty(kind: TyKind<'_>) -> Box<Ty<'_>> {
         bx(ty(kind))
     }
 
-    fn vd(s: &str, exp: Exp) -> Vdecl {
+    fn vd<'ast>(s: &str, exp: Exp<'ast>) -> Vdecl<'ast> {
         Vdecl {
-            name: s.to_string(),
+            name: todo!(),
             exp: nl(exp),
         }
     }
 
-    fn lex_toks(s: &str) -> Vec<Token> {
-        crate::oat::lexer::Lexer::new(s).lex_all().unwrap()
+    fn lex_toks<'out>(s: &str, a: &'out Arena<str>) -> Vec<Token<'out>> {
+        crate::oat::lexer::Lexer::new(s, a).lex_all().unwrap()
     }
 
     fn exp_test(s: &str, expected: Node<Exp>) -> Result<(), ParseError> {
-        let tokens = lex_toks(s);
+        let arena = Arena::new();
+        let tokens = lex_toks(s, &arena);
         let exp = Parser::new(tokens).parse_exp()?;
         assert_eq!(exp, expected);
         Ok(())
     }
 
     fn stmt_test(s: &str, expected: Node<Stmt>) -> Result<(), ParseError> {
-        let tokens = lex_toks(s);
+        let arena = Arena::new();
+        let tokens = lex_toks(s, &arena);
         let stmt = Parser::new(tokens).parse_stmt()?;
         assert_eq!(stmt, expected);
         Ok(())

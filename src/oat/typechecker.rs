@@ -1,5 +1,7 @@
-use std::collections::{HashMap, HashSet};
 use once_cell::sync::Lazy;
+use internment::Arena;
+
+use std::collections::{HashMap, HashSet};
 
 use super::ast::*;
 use super::Node;
@@ -7,10 +9,10 @@ use super::Node;
 #[derive(Debug)]
 pub struct TypeError(String);
 
-pub struct Context {
-    pub structs: HashMap<Ident, Vec<(Ty, Ident)>>,
-    pub vars: HashMap<Ident, Ty>,
-    pub funcs: HashMap<Ident, Ty>,
+pub struct Context<'ast> {
+    pub structs: HashMap<Ident<'ast>, Vec<(Ty<'ast>, Ident<'ast>)>>,
+    pub vars: HashMap<Ident<'ast>, Ty<'ast>>,
+    pub funcs: HashMap<Ident<'ast>, Ty<'ast>>,
 }
 
 pub static BUILTINS: Lazy<HashMap<&str, Ty>> = Lazy::new(|| {
@@ -69,7 +71,7 @@ fn subtype(sub: &Ty, sup: &Ty, ctx: &Context) -> bool {
     }
 }
 
-fn bop_ty(b: Binop) -> (Ty, Ty, Ty) {
+fn bop_ty(b: Binop) -> (Ty<'static>, Ty<'static>, Ty<'static>) {
     let int_ty = Ty { nullable: false, kind: TyKind::Int };
     let bool_ty = Ty { nullable: false, kind: TyKind::Bool };
     match b {
@@ -80,7 +82,7 @@ fn bop_ty(b: Binop) -> (Ty, Ty, Ty) {
     }
 }
 
-fn uop_ty(u: Unop) -> (Ty, Ty) {
+fn uop_ty(u: Unop) -> (Ty<'static>, Ty<'static>) {
     let int_ty = Ty { nullable: false, kind: TyKind::Int };
     let bool_ty = Ty { nullable: false, kind: TyKind::Bool };
     match u {
@@ -89,7 +91,7 @@ fn uop_ty(u: Unop) -> (Ty, Ty) {
     }
 }
 
-fn gexp(e: &Exp, ctx: &Context) -> Result<Ty, TypeError> {
+fn gexp<'ast>(e: &Exp<'ast>, ctx: &Context<'ast>) -> Result<Ty<'ast>, TypeError> {
     let ty = match e {
         Exp::Null(t) => Ty { nullable: true, kind: t.kind.clone() },
         Exp::Bool(_) => Ty { nullable: false, kind: TyKind::Bool },
@@ -137,7 +139,7 @@ fn gexp(e: &Exp, ctx: &Context) -> Result<Ty, TypeError> {
     Ok(ty)
 }
 
-fn call(f: &Exp, args: &[Node<Exp>], locals: &HashMap<Ident, Ty>, ctx: &Context) -> Result<Ty, TypeError> {
+fn call<'ast>(f: &Exp<'ast>, args: &[Node<Exp<'ast>>], locals: &HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Context<'ast>) -> Result<Ty<'ast>, TypeError> {
     let f_ty = exp(f, locals, ctx, false)?;
     if f_ty.nullable {
         return Err(TypeError("can't call a possibly null value".to_string()));
@@ -161,7 +163,7 @@ fn call(f: &Exp, args: &[Node<Exp>], locals: &HashMap<Ident, Ty>, ctx: &Context)
     Ok(*ret_ty)
 }
 
-fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context, lhs: bool) -> Result<Ty, TypeError> {
+fn exp<'ast>(e: &Exp<'ast>, locals: &HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Context<'ast>, lhs: bool) -> Result<Ty<'ast>, TypeError> {
     let ty = match e {
         Exp::Null(t) => Ty { nullable: true, kind: t.kind.clone() },
         Exp::Bool(_) => Ty { nullable: false, kind: TyKind::Bool },
@@ -309,7 +311,7 @@ fn exp(e: &Exp, locals: &HashMap<Ident, Ty>, ctx: &Context, lhs: bool) -> Result
     Ok(ty)
 }
 
-fn vdecl(vd: &Vdecl, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(), TypeError> {
+fn vdecl<'ast>(vd: &Vdecl<'ast>, locals: &mut HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Context<'ast>) -> Result<(), TypeError> {
     let ty = exp(&vd.exp, locals, ctx, false)?;
     if ty == (Ty { nullable: false, kind: TyKind::Void }) {
         return Err(TypeError("cannot declare variable of void type".to_string()));
@@ -322,7 +324,7 @@ fn vdecl(vd: &Vdecl, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<(
     Ok(())
 }
 
-fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<bool, TypeError> {
+fn stmt<'ast>(s: &Stmt<'ast>, ret_ty: &Ty<'ast>, locals: &mut HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Context<'ast>) -> Result<bool, TypeError> {
     match s {
         Stmt::Assn(lhs, rhs) => {
             let l_ty = exp(lhs, locals, ctx, true)?;
@@ -416,7 +418,7 @@ fn stmt(s: &Stmt, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -
     }
 }
 
-fn block(b: &Block, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context) -> Result<bool, TypeError> {
+fn block<'ast>(b: &Block<'ast>, ret_ty: &Ty<'ast>, locals: &mut HashMap<Ident<'ast>, Ty<'ast>>, ctx: &Context<'ast>) -> Result<bool, TypeError> {
     let mut returns = false;
     for s in b {
         if returns {
@@ -429,7 +431,7 @@ fn block(b: &Block, ret_ty: &Ty, locals: &mut HashMap<Ident, Ty>, ctx: &Context)
     Ok(returns)
 }
 
-fn function_body(f: &Fdecl, ctx: &Context) -> Result<(), TypeError> {
+fn function_body<'ast>(f: &Fdecl<'ast>, ctx: &Context<'ast>) -> Result<(), TypeError> {
     let mut locals: HashMap<Ident, Ty> = f.args.iter().map(|(t, n)| (n.clone(), t.clone())).collect();
 
     let returns = block(&f.body, &f.ret_ty, &mut locals, ctx)?;
@@ -441,7 +443,7 @@ fn function_body(f: &Fdecl, ctx: &Context) -> Result<(), TypeError> {
     Ok(())
 }
 
-fn type_decl_verify(t: &Tdecl, ctx: &Context) -> Result<(), TypeError> {
+fn type_decl_verify<'ast>(t: &Tdecl<'ast>, ctx: &Context<'ast>) -> Result<(), TypeError> {
     for field in &t.fields {
         if let TyKind::Struct(s) = &field.ty.kind {
             if !ctx.structs.contains_key(s) {
@@ -452,11 +454,11 @@ fn type_decl_verify(t: &Tdecl, ctx: &Context) -> Result<(), TypeError> {
     Ok(())
 }
 
-fn global(g: &Gdecl, ctx: &Context) -> Result<(Ident, Ty), TypeError> {
+fn global<'ast>(g: &Gdecl<'ast>, ctx: &Context<'ast>) -> Result<(Ident<'ast>, Ty<'ast>), TypeError> {
     Ok((g.name.clone(), gexp(&g.init, ctx)?))
 }
 
-fn function_header(f: &Fdecl) -> Result<(Ident, Ty), TypeError> {
+fn function_header<'ast>(f: &Fdecl<'ast>) -> Result<(Ident<'ast>, Ty<'ast>), TypeError> {
     // todo: not really a type error
     let set: HashSet<_> = f.args.iter().map(|(_, n)| n).collect();
     if set.len() != f.args.len() {
@@ -467,7 +469,7 @@ fn function_header(f: &Fdecl) -> Result<(Ident, Ty), TypeError> {
     Ok((f.name.clone(), ty))
 }
 
-fn type_decl(t: &Tdecl) -> Result<Vec<(Ty, Ident)>, TypeError> {
+fn type_decl<'ast>(t: &Tdecl<'ast>) -> Result<Vec<(Ty<'ast>, Ident<'ast>)>, TypeError> {
     let fields: Vec<_> = t.fields.iter().map(|f| (f.ty.clone(), f.name.clone())).collect();
     let distinct_fields: HashSet<_> = t.fields.iter().map(|f| &f.name).collect();
     if fields.len() != distinct_fields.len() {
@@ -476,9 +478,9 @@ fn type_decl(t: &Tdecl) -> Result<Vec<(Ty, Ident)>, TypeError> {
     Ok(fields)
 }
 
-pub fn check(prog: &Prog) -> Result<Context, TypeError> {
-    let mut structs: HashMap<Ident, Vec<(Ty, Ident)>> = Default::default();
-    let mut funcs: HashMap<Ident, Ty> = Default::default();
+pub fn check<'ast>(prog: &Prog<'ast>, arena: &'ast Arena<str>) -> Result<Context<'ast>, TypeError> {
+    let mut structs: HashMap<Ident<'ast>, Vec<(Ty<'ast>, Ident<'ast>)>> = Default::default();
+    let mut funcs: HashMap<Ident<'ast>, Ty<'ast>> = Default::default();
 
     for decl in prog {
         if let Decl::Type(t) = decl {
@@ -490,7 +492,7 @@ pub fn check(prog: &Prog) -> Result<Context, TypeError> {
     }
 
     for (name, ty) in BUILTINS.iter() {
-        assert!(funcs.insert(name.to_string(), ty.clone()).is_none(), "function names can't conflict with type names");
+        assert!(funcs.insert(arena.intern(name), ty.clone()).is_none(), "function names can't conflict with type names");
     }
 
     for decl in prog {

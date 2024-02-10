@@ -1,15 +1,17 @@
+use internment::ArenaIntern;
+
 use super::Node;
 
-pub type Ident = String;
+pub type Ident<'ast> = ArenaIntern<'ast, str>;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Ty {
-    pub kind: TyKind,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ty<'ast> {
+    pub kind: TyKind<'ast>,
     pub nullable: bool,
 }
 
-impl Ty {
-    pub fn non_nullable(kind: TyKind) -> Self {
+impl<'ast> Ty<'ast> {
+    pub fn non_nullable(kind: TyKind<'ast>) -> Self {
         Self {
             nullable: false,
             kind,
@@ -17,18 +19,18 @@ impl Ty {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TyKind {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TyKind<'ast> {
     Void,
     Bool,
     Int,
     String,
-    Struct(Ident),
-    Array(Box<Ty>),
-    Fun(Vec<Ty>, Box<Ty>),
+    Struct(Ident<'ast>),
+    Array(Box<Ty<'ast>>),
+    Fun(Vec<Ty<'ast>>, Box<Ty<'ast>>),
 }
 
-impl TyKind {
+impl<'ast> TyKind<'ast> {
     pub fn is_ref(&self) -> bool {
         use TyKind as Tk;
         matches!(self, Tk::String | Tk::Struct(..) | Tk::Array(..) | Tk::Fun(..))
@@ -63,76 +65,76 @@ pub enum Binop {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Exp {
-    Null(Ty),
+pub enum Exp<'ast> {
+    Null(Ty<'ast>),
     Bool(bool),
     Int(i64),
-    Str(String),
-    Id(Ident),
-    ArrElems(Ty, Vec<Node<Exp>>),
-    ArrLen(Ty, Box<Node<Exp>>),
+    Str(ArenaIntern<'ast, str>),
+    Id(Ident<'ast>),
+    ArrElems(Ty<'ast>, Vec<Node<Exp<'ast>>>),
+    ArrLen(Ty<'ast>, Box<Node<Exp<'ast>>>),
     // todo: name?
-    ArrInit(Ty, Box<Node<Exp>>, Ident, Box<Node<Exp>>),
-    Index(Box<Node<Exp>>, Box<Node<Exp>>),
-    Length(Box<Node<Exp>>),
-    Struct(Ident, Vec<(Ident, Node<Exp>)>),
-    Proj(Box<Node<Exp>>, Ident),
-    Call(Box<Node<Exp>>, Vec<Node<Exp>>),
-    Bop(Binop, Box<Node<Exp>>, Box<Node<Exp>>),
-    Uop(Unop, Box<Node<Exp>>),
+    ArrInit(Ty<'ast>, Box<Node<Exp<'ast>>>, Ident<'ast>, Box<Node<Exp<'ast>>>),
+    Index(Box<Node<Exp<'ast>>>, Box<Node<Exp<'ast>>>),
+    Length(Box<Node<Exp<'ast>>>),
+    Struct(Ident<'ast>, Vec<(Ident<'ast>, Node<Exp<'ast>>)>),
+    Proj(Box<Node<Exp<'ast>>>, Ident<'ast>),
+    Call(Box<Node<Exp<'ast>>>, Vec<Node<Exp<'ast>>>),
+    Bop(Binop, Box<Node<Exp<'ast>>>, Box<Node<Exp<'ast>>>),
+    Uop(Unop, Box<Node<Exp<'ast>>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Vdecl {
-    pub name: Ident,
-    pub exp: Node<Exp>,
+pub struct Vdecl<'ast> {
+    pub name: Ident<'ast>,
+    pub exp: Node<Exp<'ast>>,
 }
 
-pub type Block = Vec<Node<Stmt>>;
+pub type Block<'ast> = Vec<Node<Stmt<'ast>>>;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Stmt {
-    Assn(Node<Exp>, Node<Exp>),
-    Decl(Vdecl),
-    Ret(Option<Node<Exp>>),
-    Call(Node<Exp>, Vec<Node<Exp>>),
-    If(Node<Exp>, Block, Block),
-    IfNull(Ty, Ident, Node<Exp>, Block, Block),
-    For(Vec<Vdecl>, Option<Node<Exp>>, Option<Box<Node<Stmt>>>, Block),
-    While(Node<Exp>, Block),
+pub enum Stmt<'ast> {
+    Assn(Node<Exp<'ast>>, Node<Exp<'ast>>),
+    Decl(Vdecl<'ast>),
+    Ret(Option<Node<Exp<'ast>>>),
+    Call(Node<Exp<'ast>>, Vec<Node<Exp<'ast>>>),
+    If(Node<Exp<'ast>>, Block<'ast>, Block<'ast>),
+    IfNull(Ty<'ast>, Ident<'ast>, Node<Exp<'ast>>, Block<'ast>, Block<'ast>),
+    For(Vec<Vdecl<'ast>>, Option<Node<Exp<'ast>>>, Option<Box<Node<Stmt<'ast>>>>, Block<'ast>),
+    While(Node<Exp<'ast>>, Block<'ast>),
 }
 
 #[derive(Clone, Debug)]
-pub struct Gdecl {
-    pub name: Ident,
-    pub init: Node<Exp>,
+pub struct Gdecl<'ast> {
+    pub name: Ident<'ast>,
+    pub init: Node<Exp<'ast>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Fdecl {
-    pub ret_ty: Ty,
-    pub name: String,
-    pub args: Vec<(Ty, Ident)>,
-    pub body: Block,
+pub struct Fdecl<'ast> {
+    pub ret_ty: Ty<'ast>,
+    pub name: Ident<'ast>,
+    pub args: Vec<(Ty<'ast>, Ident<'ast>)>,
+    pub body: Block<'ast>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Field {
-    pub name: Ident,
-    pub ty: Ty,
+pub struct Field<'ast> {
+    pub name: Ident<'ast>,
+    pub ty: Ty<'ast>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Tdecl {
-    pub name: Ident,
-    pub fields: Vec<Field>,
+pub struct Tdecl<'ast> {
+    pub name: Ident<'ast>,
+    pub fields: Vec<Field<'ast>>,
 }
 
 #[derive(Clone, Debug)]
-pub enum Decl {
-    Var(Node<Gdecl>),
-    Fun(Node<Fdecl>),
-    Type(Node<Tdecl>),
+pub enum Decl<'ast> {
+    Var(Node<Gdecl<'ast>>),
+    Fun(Node<Fdecl<'ast>>),
+    Type(Node<Tdecl<'ast>>),
 }
 
-pub type Prog = Vec<Decl>;
+pub type Prog<'ast> = Vec<Decl<'ast>>;
