@@ -1,19 +1,9 @@
 use super::{ast, Range, Node};
 use super::lexer::{Token, TokenKind, TokenData};
 
-use std::fmt;
-
-use enum_map::{EnumMap, enum_map};
-use once_cell::sync::Lazy;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("parse error")]
 pub struct ParseError;
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "parse error")
-    }
-}
-impl std::error::Error for ParseError {}
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -22,7 +12,7 @@ pub type ParseResult<T> = Result<T, ParseError>;
 enum Precedence {
     // nothing!
     None,
-    // [\]
+    // [|]
     IOr,
     // [&]
     IAnd,
@@ -72,83 +62,23 @@ impl Precedence {
     }
 }
 
-
-type InfixParseFn = fn(&mut Parser, Node<ast::Exp>) -> ParseResult<Node<ast::Exp>>;
-type PrefixParseFn = fn(&mut Parser) -> ParseResult<Node<ast::Exp>>;
-
-#[derive(Clone, Copy)]
-struct ParseRule {
-    precedence: Precedence,
-    prefix: Option<PrefixParseFn>,
-    infix: Option<InfixParseFn>,
-}
-
-impl ParseRule {
-    pub const fn new(precedence: Precedence, prefix: Option<PrefixParseFn>, infix: Option<InfixParseFn>) -> Self {
-        ParseRule { precedence, prefix, infix }
+fn precedence_of(tk: TokenKind) -> Precedence {
+    use TokenKind as TK;
+    match tk {
+    TK::IOr => Precedence::IOr,
+    TK::IAnd => Precedence::IAnd,
+    TK::Bar => Precedence::Or,
+    TK::Amper => Precedence::And,
+    TK::EqEq | TK::BangEq => Precedence::Equality,
+    TK::Gt | TK::Lt | TK::GtEq | TK::LtEq => Precedence::Comparison,
+    TK::GtGt | TK::LtLt | TK::GtGtGt => Precedence::Bitshift,
+    TK::Plus | TK::Dash => Precedence::Term,
+    TK::Star => Precedence::Factor,
+    TK::LBracket => Precedence::Index,
+    TK::Dot => Precedence::Proj,
+    TK::LParen => Precedence::Call,
+    _ => Precedence::None,
     }
-}
-
-fn get_rule(kind: TokenKind) -> ParseRule {
-    static PARSE_RULES: Lazy<EnumMap<TokenKind, ParseRule>> = Lazy::new(||{ 
-        enum_map! { 
-            TokenKind::Eof => ParseRule::new(Precedence::None, None, None),
-            TokenKind::IntLit => ParseRule::new(Precedence::None, Some(Parser::parse_int_lit), None),
-            TokenKind::Null => ParseRule::new(Precedence::None, None, None),
-            TokenKind::String => ParseRule::new(Precedence::None, Some(Parser::parse_string_lit), None),
-            TokenKind::Ident => ParseRule::new(Precedence::None, Some(Parser::parse_ident), None),
-            TokenKind::UIdent => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
-            TokenKind::TInt => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
-            TokenKind::TVoid => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
-            TokenKind::TString => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
-            TokenKind::If => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Ifq => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Else => ParseRule::new(Precedence::None, None, None),
-            TokenKind::While => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Return => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Var => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Struct => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Semi => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Comma => ParseRule::new(Precedence::None, None, None),
-            TokenKind::LBrace => ParseRule::new(Precedence::None, None, None),
-            TokenKind::RBrace => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Plus => ParseRule::new(Precedence::Term, None, Some(Parser::parse_binary)),
-            TokenKind::Dash => ParseRule::new(Precedence::Term, Some(Parser::parse_unary), Some(Parser::parse_binary)),
-            TokenKind::Star => ParseRule::new(Precedence::Factor, None, Some(Parser::parse_binary)),
-            TokenKind::EqEq => ParseRule::new(Precedence::Equality, None, Some(Parser::parse_binary)),
-            TokenKind::Eq => ParseRule::new(Precedence::None, None, None),
-            TokenKind::LParen => ParseRule::new(Precedence::Call, Some(Parser::parse_grouping), Some(Parser::parse_call)),
-            TokenKind::RParen => ParseRule::new(Precedence::None, None, None),
-            TokenKind::LBracket => ParseRule::new(Precedence::Index, None, Some(Parser::parse_index)),
-            TokenKind::RBracket => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Tilde => ParseRule::new(Precedence::None, Some(Parser::parse_unary), None),
-            TokenKind::Bang => ParseRule::new(Precedence::None, Some(Parser::parse_unary), None),
-            TokenKind::Global => ParseRule::new(Precedence::None, None, None),
-            TokenKind::For => ParseRule::new(Precedence::None, None, None),
-            TokenKind::TBool => ParseRule::new(Precedence::None, Some(Parser::parse_null_ptr), None),
-            TokenKind::Length => ParseRule::new(Precedence::None, Some(Parser::parse_length_exp), None),
-            TokenKind::True => ParseRule::new(Precedence::None, Some(Parser::parse_bool_lit), None),
-            TokenKind::False => ParseRule::new(Precedence::None, Some(Parser::parse_bool_lit), None),
-            TokenKind::Dot => ParseRule::new(Precedence::Proj, None, Some(Parser::parse_proj)),
-            TokenKind::New => ParseRule::new(Precedence::None, Some(Parser::parse_new_exp), None),
-            TokenKind::Gt => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
-            TokenKind::GtEq => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
-            TokenKind::Lt => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
-            TokenKind::LtEq => ParseRule::new(Precedence::Comparison, None, Some(Parser::parse_binary)),
-            TokenKind::BangEq => ParseRule::new(Precedence::Equality, None, Some(Parser::parse_binary)),
-            TokenKind::Bar => ParseRule::new(Precedence::Or, None, Some(Parser::parse_binary)),
-            TokenKind::Amper => ParseRule::new(Precedence::And, None, Some(Parser::parse_binary)),
-            TokenKind::IOr => ParseRule::new(Precedence::IOr, None, Some(Parser::parse_binary)),
-            TokenKind::IAnd => ParseRule::new(Precedence::IAnd, None, Some(Parser::parse_binary)),
-            TokenKind::LtLt => ParseRule::new(Precedence::Bitshift, None, Some(Parser::parse_binary)),
-            TokenKind::GtGt => ParseRule::new(Precedence::Bitshift, None, Some(Parser::parse_binary)),
-            TokenKind::GtGtGt => ParseRule::new(Precedence::Bitshift, None, Some(Parser::parse_binary)),
-            TokenKind::Arrow => ParseRule::new(Precedence::None, None, None),
-            TokenKind::Question => ParseRule::new(Precedence::None, None, None),
-        }
-    });
-
-    PARSE_RULES[kind]
 }
 
 #[derive(Debug)]
@@ -432,27 +362,36 @@ impl Parser {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> ParseResult<Node<ast::Exp>> {
-        let rule = self.peek().and_then(|t| get_rule(t.kind).prefix);
-        let Some(prefix) = rule else {
-            panic!("expected expression")
+        let token = self.peek().expect("expression");
+        let mut lhs = match token.kind {
+            TokenKind::IntLit => self.parse_int_lit()?,
+            TokenKind::String => self.parse_string_lit()?,
+            TokenKind::Ident => self.parse_ident()?,
+            TokenKind::LParen => self.parse_grouping()?,
+            TokenKind::Dash | TokenKind::Tilde | TokenKind::Bang => self.parse_unary()?,
+            TokenKind::TBool | TokenKind::UIdent | TokenKind::TInt | TokenKind::TVoid | TokenKind::TString => self.parse_null_ptr()?,
+            TokenKind::Length => self.parse_length_exp()?,
+            TokenKind::True | TokenKind::False => self.parse_bool_lit()?,
+            TokenKind::New => self.parse_new_exp()?,
+            tk => panic!("illegal way to start expression {tk:?}"),
         };
 
-        let mut lhs = prefix(self)?;
-
         loop {
-            let next_rule = self.peek().map(|t| get_rule(t.kind));
-            let Some(rule) = next_rule else { break };
-            if precedence > rule.precedence {
+            let next_precedence = self.peek().map(|t| precedence_of(t.kind)).unwrap_or(Precedence::None);
+            if precedence > next_precedence {
                 break;
             }
-
-            let infix = next_rule.and_then(|r| r.infix);
-            if let Some(infix) = infix {
-                lhs = infix(self, lhs)?;
-            } else {
-                // unreachable?
-                panic!("expected infix rule fr!")
-            }
+            let next_token = self.consume().unwrap().clone();
+            lhs = match next_token.kind {
+                TokenKind::LParen => self.parse_call(lhs, next_token)?,
+                TokenKind::LBracket => self.parse_index(lhs, next_token)?,
+                TokenKind::Dot => self.parse_proj(lhs, next_token)?,
+                TokenKind::Plus | TokenKind::Dash | TokenKind::Star | TokenKind::EqEq | 
+                TokenKind::Gt | TokenKind::GtEq | TokenKind::Lt | TokenKind::LtEq | TokenKind::BangEq | 
+                TokenKind::Bar | TokenKind::Amper | TokenKind::IOr | TokenKind::IAnd | TokenKind::LtLt | 
+                TokenKind::GtGt | TokenKind::GtGtGt => self.parse_binary(lhs, next_token)?,
+                tk => panic!("{tk:?} is not an infix operator"),
+            };
         }
 
         Ok(lhs)
@@ -529,29 +468,26 @@ impl Parser {
 
     fn parse_null_ptr(&mut self) -> ParseResult<Node<ast::Exp>> {
         let start_loc = self.peek().unwrap().loc;
-        let ty = self.parse_type()?;
+        let ty = self.parse_ref_type()?;
         let null = self.assert_next_is(TokenKind::Null)?;
         let loc = Range::merge(start_loc, null.loc);
         Ok(Node { loc, t: ast::Exp::Null(ty) })
     }
 
-    fn parse_call(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
-        self.consume().unwrap();
+    fn parse_call(&mut self, lhs: Node<ast::Exp>, _: Token) -> ParseResult<Node<ast::Exp>> {
         let (args, rparen) = self.parse_separated(Parser::parse_exp, TokenKind::Comma, TokenKind::RParen)?;
         let loc = Range::merge(lhs.loc, rparen.loc);
         Ok(Node { loc, t: ast::Exp::Call(Box::new(lhs), args) })
     }
 
-    fn parse_index(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
-        self.consume().unwrap();
+    fn parse_index(&mut self, lhs: Node<ast::Exp>, _: Token) -> ParseResult<Node<ast::Exp>> {
         let index = self.parse_exp()?;
         let rbracket = self.assert_next_is(TokenKind::RBracket)?;
         let loc = Range::merge(lhs.loc, rbracket.loc);
         Ok(Node { loc, t: ast::Exp::Index(Box::new(lhs), Box::new(index)) })
     }
 
-    fn parse_proj(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
-        self.consume().unwrap();
+    fn parse_proj(&mut self, lhs: Node<ast::Exp>, _: Token) -> ParseResult<Node<ast::Exp>> {
         let field = self.assert_next_is(TokenKind::Ident)?;
         let TokenData::String(field_name) = &field.data else { unreachable!() };
         let loc = Range::merge(lhs.loc, field.loc);
@@ -610,10 +546,10 @@ impl Parser {
         Ok(Node { loc, t: ast::Exp::Uop(unop, Box::new(exp)) })
     }
 
-    fn parse_binary(&mut self, lhs: Node<ast::Exp>) -> ParseResult<Node<ast::Exp>> {
-        let binop_kind = self.consume().unwrap().kind;
-        let rule = get_rule(binop_kind);
-        let rhs = self.parse_precedence(rule.precedence.next())?;
+    fn parse_binary(&mut self, lhs: Node<ast::Exp>, binop: Token) -> ParseResult<Node<ast::Exp>> {
+        let binop_kind = binop.kind;
+        let rhs_prec = precedence_of(binop_kind);
+        let rhs = self.parse_precedence(rhs_prec.next())?;
         let binop = match binop_kind {
             TokenKind::IOr => ast::Binop::IOr,
             TokenKind::IAnd => ast::Binop::IAnd,

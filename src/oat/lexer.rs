@@ -42,7 +42,7 @@ pub struct Token {
     pub data: TokenData,
 }
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, enum_map::Enum)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum TokenKind {
     /// end of file
     Eof,
