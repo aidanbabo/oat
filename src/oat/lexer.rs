@@ -519,10 +519,10 @@ impl<'input, 'output> Lexer<'input, 'output> {
         let mut tokens = Vec::new();
         loop {
             let t = self.lex()?;
+            tokens.push(t);
             if t.kind == TokenKind::Eof {
                 break;
             }
-            tokens.push(t);
         }
         Ok(tokens)
     }

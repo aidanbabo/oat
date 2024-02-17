@@ -2,8 +2,8 @@ use super::{ast, Range, Node};
 use super::lexer::{Token, TokenKind, TokenData};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("parse error")]
-pub struct ParseError;
+#[error("parse error: {0}")]
+pub struct ParseError(String);
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -95,33 +95,32 @@ impl<'ast> Parser<'ast> {
         }
     }
 
-    fn peek(&self) -> Option<Token<'ast>> {
-        self.tokens.get(self.next_token).copied()
+    fn peek(&self) -> Token<'ast> {
+        self.peek_n(1)
     }
 
-    fn peek_n(&self, n: usize) -> Option<Token<'ast>> {
-        self.tokens.get(self.next_token + n - 1).copied()
+    fn peek_n(&self, n: usize) -> Token<'ast> {
+        self.tokens.get(self.next_token + n - 1).copied().expect("stopped at eof token")
     }
 
-    fn consume(&mut self) -> Option<Token<'ast>> {
-        let t = self.tokens.get(self.next_token).copied();
-        if t.is_some() {
+    fn consume(&mut self) -> Token<'ast> {
+        let t = self.tokens.get(self.next_token).copied().expect("stopped at eof token");
+        if t.kind != TokenKind::Eof {
             self.next_token += 1;
         }
         t
     }
 
     fn test_next_is(&mut self, kind: TokenKind) -> bool {
-        self.peek().is_some_and(|t| t.kind == kind)
+        self.peek().kind == kind
     }
 
-    #[track_caller]
     fn assert_next_is(&mut self, kind: TokenKind) -> ParseResult<Token<'ast>> {
-        let Some(t) = self.consume() else { panic!("expected {kind:?} but got eof") };
+        let t = self.consume();
         if t.kind == kind {
             Ok(t)
         } else {
-            panic!("expected {kind:?} but found {:?}", t.kind);
+            Err(ParseError(format!("expected {kind:?} but found {:?}", t.kind)))
         }
     }
 
@@ -144,10 +143,15 @@ impl<'ast> Parser<'ast> {
 
     pub fn parse_program(&mut self) -> ParseResult<ast::Prog<'ast>> {
         let mut decls = vec![];
-        while let Some(t) = self.peek() {
+        loop {
+            let t = self.peek();
+            if t.kind == TokenKind::Eof {
+                break;
+            }
+
             let decl = match t.kind {
                 TokenKind::Global => {
-                    let start = self.consume().unwrap().loc;
+                    let start = self.consume().loc;
                     let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
                     self.assert_next_is(TokenKind::Eq)?;
                     let init = self.parse_exp()?; // todo: validate for gexp
@@ -160,7 +164,7 @@ impl<'ast> Parser<'ast> {
                     ast::Decl::Var(Node { loc, t: gdecl })
                 },
                 TokenKind::Struct => {
-                    let start = self.consume().unwrap().loc;
+                    let start = self.consume().loc;
                     let TokenData::String(name) = self.assert_next_is(TokenKind::UIdent)?.data else { unreachable!() };
                     self.assert_next_is(TokenKind::LBrace)?;
                     let (fields, end) = self.parse_separated(Parser::parse_field_decl, TokenKind::Semi, TokenKind::RBrace)?;
@@ -209,20 +213,20 @@ impl<'ast> Parser<'ast> {
     }
 
     pub fn parse_stmt(&mut self) -> ParseResult<Node<ast::Stmt<'ast>>> {
-        match self.peek().map(|t| t.kind) {
-            Some(TokenKind::Var) => {
+        match self.peek().kind {
+            TokenKind::Var => {
                 let Node { loc, t: vdecl } = self.parse_vdecl()?;
                 let end = self.assert_next_is(TokenKind::Semi)?.loc;
                 let loc = Range::merge(loc, end);
                 Ok(Node { loc, t: ast::Stmt::Decl(vdecl) })
             }
-            Some(TokenKind::If | TokenKind::Ifq) => {
+            TokenKind::If | TokenKind::Ifq => {
                 self.parse_ifs()
             }
-            Some(TokenKind::Return) => {
-                let start = self.consume().unwrap().loc;
+            TokenKind::Return => {
+                let start = self.consume().loc;
                 if self.test_next_is(TokenKind::Semi) {
-                    let end = self.consume().unwrap().loc;
+                    let end = self.consume().loc;
                     let loc = Range::merge(start, end);
                     return Ok(Node { loc, t: ast::Stmt::Ret(None) });
                 }
@@ -232,8 +236,8 @@ impl<'ast> Parser<'ast> {
                 let loc = Range::merge(start, end);
                 Ok(Node { loc, t: ast::Stmt::Ret(Some(e)) })
             }
-            Some(TokenKind::While) => {
-                let start = self.consume().unwrap().loc;
+            TokenKind::While => {
+                let start = self.consume().loc;
                 self.assert_next_is(TokenKind::LParen)?;
                 let cond = self.parse_exp()?;
                 self.assert_next_is(TokenKind::RParen)?;
@@ -241,8 +245,8 @@ impl<'ast> Parser<'ast> {
                 let loc = Range::merge(start, end);
                 Ok(Node { loc, t: ast::Stmt::While(cond, block) })
             }
-            Some(TokenKind::For) => {
-                let start = self.consume().unwrap().loc;
+            TokenKind::For => {
+                let start = self.consume().loc;
                 self.assert_next_is(TokenKind::LParen)?;
                 let (decls, _semi) = self.parse_separated(|parser| parser.parse_vdecl().map(|node| node.t), TokenKind::Comma, TokenKind::Semi)?;
 
@@ -264,7 +268,6 @@ impl<'ast> Parser<'ast> {
                 let loc = Range::merge(start, end);
                 Ok(Node { loc, t: ast::Stmt::For(decls, cond, update, block) })
             }
-            None => panic!("No input :/"),
             _ => {
                 let e = self.parse_exp()?;
                 let start = e.loc;
@@ -283,7 +286,7 @@ impl<'ast> Parser<'ast> {
                         let loc = Range::merge(start, end);
                         Ok(Node { loc, t: ast::Stmt::Assn(lhs, rhs) })
                     }
-                    e => panic!("strange exp: {e:?}"),
+                    e => Err(ParseError(format!("unexpected expression: {e:?}. expected void call or assignment"))),
                 }
             }
         }
@@ -295,21 +298,21 @@ impl<'ast> Parser<'ast> {
         }
 
         self.consume();
-        match self.peek().map(|t| t.kind) {
-            Some(TokenKind::LBrace) => {
+        match self.peek().kind {
+            TokenKind::LBrace => {
                 self.parse_block()
             }
-            Some(TokenKind::If | TokenKind::Ifq) => {
+            TokenKind::If | TokenKind::Ifq => {
                 let trailing_ifs = self.parse_ifs()?;
                 let loc = trailing_ifs.loc;
                 Ok((vec![trailing_ifs], loc))
             }
-            _ => panic!("expected block or if statement after else"),
+            k => Err(ParseError(format!("expected block or if statement after else, found {k:?}"))),
         }
     }
 
     fn parse_ifs(&mut self) -> ParseResult<Node<ast::Stmt<'ast>>> {
-        let iph = self.consume().unwrap();
+        let iph = self.consume();
         let start = iph.loc;
         match iph.kind {
             TokenKind::If => {
@@ -349,7 +352,7 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_vdecl(&mut self) -> ParseResult<Node<ast::Vdecl<'ast>>> {
-        let start = self.consume().unwrap().loc;
+        let start = self.consume().loc;
         let TokenData::String(name) = self.assert_next_is(TokenKind::Ident)?.data else { unreachable!() };
         self.assert_next_is(TokenKind::Eq)?;
         let exp = self.parse_exp()?;
@@ -362,7 +365,7 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let token = self.peek().expect("expression");
+        let token = self.peek();
         let mut lhs = match token.kind {
             TokenKind::IntLit => self.parse_int_lit()?,
             TokenKind::String => self.parse_string_lit()?,
@@ -373,15 +376,15 @@ impl<'ast> Parser<'ast> {
             TokenKind::Length => self.parse_length_exp()?,
             TokenKind::True | TokenKind::False => self.parse_bool_lit()?,
             TokenKind::New => self.parse_new_exp()?,
-            tk => panic!("illegal way to start expression {tk:?}"),
+            tk => return Err(ParseError(format!("illegal way to start expression {tk:?}"))),
         };
 
         loop {
-            let next_precedence = self.peek().map(|t| precedence_of(t.kind)).unwrap_or(Precedence::None);
+            let next_precedence = precedence_of(self.peek().kind);
             if precedence > next_precedence {
                 break;
             }
-            let next_token = self.consume().unwrap();
+            let next_token = self.consume();
             lhs = match next_token.kind {
                 TokenKind::LParen => self.parse_call(lhs, next_token)?,
                 TokenKind::LBracket => self.parse_index(lhs, next_token)?,
@@ -390,7 +393,7 @@ impl<'ast> Parser<'ast> {
                 TokenKind::Gt | TokenKind::GtEq | TokenKind::Lt | TokenKind::LtEq | TokenKind::BangEq | 
                 TokenKind::Bar | TokenKind::Amper | TokenKind::IOr | TokenKind::IAnd | TokenKind::LtLt | 
                 TokenKind::GtGt | TokenKind::GtGtGt => self.parse_binary(lhs, next_token)?,
-                tk => panic!("{tk:?} is not an infix operator"),
+                tk => return Err(ParseError(format!("{tk:?} is not an infix operator"))),
             };
         }
 
@@ -426,18 +429,17 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_new_exp(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let new_loc = self.consume().unwrap().loc;
+        let new_loc = self.consume().loc;
         let ty = self.parse_type()?;
-        let open = self.consume();
-        match open.map(|o| o.kind) {
-            Some(TokenKind::LBracket) => {
+        match self.consume().kind {
+            TokenKind::LBracket => {
                 self.parse_array_helper(new_loc, ty)
             }
-            Some(TokenKind::LBrace) => {
+            TokenKind::LBrace => {
                 match ty.kind {
                     ast::TyKind::Struct(name) => {
                         if ty.nullable {
-                            panic!("expected a struct name not a nullable struct type")
+                            return Err(ParseError("cannot new a nullable struct".to_string()));
                         }
                         let (fields, rparen) = self.parse_separated(Parser::parse_field_exp, TokenKind::Semi, TokenKind::RBrace)?;
                         let loc = Range::merge(new_loc, rparen.loc);
@@ -448,17 +450,15 @@ impl<'ast> Parser<'ast> {
                         let loc = Range::merge(new_loc, rbrace.loc);
                         Ok(Node { loc, t: ast::Exp::ArrElems(*ty, elems) })
                     }
-                    _ => panic!("cannot use `new` to create non-struct or non-array types")
+                    _ => Err(ParseError(format!("cannot use `new` to create non-struct or non-array types: {ty}"))),
                 }
             }
-            // todo: these messages
-            None => panic!("parsing failed in the middle of new expression"),
-            _ => panic!("expected '{{' for a new struct or '[' for a new array")
+            k => Err(ParseError(format!("expected '{{' for a new struct or '[' for a new array but found {k:?}"))),
         }
     }
 
     fn parse_length_exp(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let length_loc = self.consume().unwrap().loc;
+        let length_loc = self.consume().loc;
         self.assert_next_is(TokenKind::LParen)?;
         let e = self.parse_exp()?;
         let rparen = self.assert_next_is(TokenKind::RParen)?;
@@ -467,7 +467,7 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_null_ptr(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let start_loc = self.peek().unwrap().loc;
+        let start_loc = self.peek().loc;
         let ty = self.parse_ref_type()?;
         let null = self.assert_next_is(TokenKind::Null)?;
         let loc = Range::merge(start_loc, null.loc);
@@ -496,7 +496,7 @@ impl<'ast> Parser<'ast> {
 
     // todo: this may also be a null function type (e.g. ()->int null)
     fn parse_grouping(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let lparen_loc = self.consume().unwrap().loc;
+        let lparen_loc = self.consume().loc;
         let e = self.parse_exp()?;
         let rparen_loc = self.assert_next_is(TokenKind::RParen)?.loc;
         let loc = Range::merge(lparen_loc, rparen_loc);
@@ -504,19 +504,19 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_ident(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let ident = self.consume().unwrap();
+        let ident = self.consume();
         let TokenData::String(s) = &ident.data else { unreachable!() };
         Ok(Node { loc: ident.loc, t: ast::Exp::Id(*s) })
     }
 
     fn parse_string_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let string_lit = self.consume().unwrap();
+        let string_lit = self.consume();
         let TokenData::String(s) = &string_lit.data else { unreachable!() };
         Ok(Node { loc: string_lit.loc, t: ast::Exp::Str(*s) })
     }
 
     fn parse_bool_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let bool_lit = self.consume().unwrap();
+        let bool_lit = self.consume();
         let val = match bool_lit.kind {
             TokenKind::True => true,
             TokenKind::False => false,
@@ -526,13 +526,13 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_int_lit(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let int_lit = self.consume().unwrap();
+        let int_lit = self.consume();
         let TokenData::Int(val) = int_lit.data else { unreachable!() };
         Ok(Node { loc: int_lit.loc, t: ast::Exp::Int(val) })
     }
 
     fn parse_unary(&mut self) -> ParseResult<Node<ast::Exp<'ast>>> {
-        let unop_token = self.consume().unwrap();
+        let unop_token = self.consume();
 
         let exp = self.parse_precedence(Precedence::Unary)?;
         let unop = match unop_token.kind {
@@ -574,29 +574,29 @@ impl<'ast> Parser<'ast> {
     }
 
     fn parse_any_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
-        let mut t = match self.peek().map(|t| t.kind) {
-            Some(TokenKind::TVoid) => {
+        let mut t = match self.peek().kind {
+            TokenKind::TVoid => {
                 self.consume();
                 ast::Ty::non_nullable(ast::TyKind::Void)
             }
-            Some(TokenKind::TBool) => {
+            TokenKind::TBool => {
                 self.consume();
                 ast::Ty::non_nullable(ast::TyKind::Bool)
             }
-            Some(TokenKind::TInt) => {
+            TokenKind::TInt => {
                 self.consume();
                 ast::Ty::non_nullable(ast::TyKind::Int)
             }
-            Some(TokenKind::TString) => {
+            TokenKind::TString => {
                 self.consume();
                 ast::Ty::non_nullable(ast::TyKind::String)
             }
-            Some(TokenKind::UIdent) => {
-                let t = self.consume().unwrap();
+            TokenKind::UIdent => {
+                let t = self.consume();
                 let TokenData::String(name) = &t.data else { unreachable!() };
                 ast::Ty::non_nullable(ast::TyKind::Struct(*name))
             }
-            Some(TokenKind::LParen) => {
+            TokenKind::LParen => {
                 self.consume();
                 let (mut arg_types, _) = self.parse_separated(Self::parse_type, TokenKind::Comma, TokenKind::RParen)?;
                 // todo: hack for parenthesized types, would still parse '(int,)' as 'int' even though it is
@@ -609,24 +609,23 @@ impl<'ast> Parser<'ast> {
                     ast::Ty::non_nullable(ast::TyKind::Fun(arg_types, Box::new(ret_ty)))
                 }
             }
-            None => panic!("expected type but found nothing!"),
-            k => unimplemented!("unexpected token kind: {k:?}"),
+            k => return Err(ParseError(format!("unexpected token kind: {k:?} in type"))),
         };
 
         loop {
-            match self.peek().map(|t| t.kind) {
-                Some(TokenKind::Question) => {
+            match self.peek().kind {
+                TokenKind::Question => {
                     self.consume();
                     if !t.kind.is_ref() {
-                        panic!("not a ref type");
+                        return Err(ParseError(format!("{:?} is not a reference type and therefore cannot be nullable", t.kind)));
                     }
                     if t.nullable {
-                        panic!("can't make a nullable type nullable as it is not a reference type")
+                        return Err(ParseError("can't make a nullable type nullable as it is not a reference type".to_string()));
                     }
                     t.nullable = true;
                 }
-                Some(TokenKind::LBracket) => {
-                    if !self.peek_n(2).map(|t| t.kind == TokenKind::RBracket).unwrap_or(false) {
+                TokenKind::LBracket => {
+                    if self.peek_n(2).kind != TokenKind::RBracket {
                         break;
                     }
                     self.consume();
@@ -645,7 +644,7 @@ impl<'ast> Parser<'ast> {
     fn parse_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
         let ty = self.parse_any_type()?;
         if ty.kind == ast::TyKind::Void {
-            panic!("`void` is not a valid type, it's only valid as a return type");
+            return Err(ParseError("`void` is not a valid type, it's only valid as a return type".to_string()));
         }
         Ok(ty)
     }
@@ -653,9 +652,11 @@ impl<'ast> Parser<'ast> {
     fn parse_ref_type(&mut self) -> ParseResult<ast::Ty<'ast>> {
         let ty = self.parse_any_type()?;
         if !ty.kind.is_ref() {
-            panic!("expected a reference type, these are strings, arrays, classes, and functions");
+            return Err(ParseError("expected a reference type, these are strings, arrays, classes, and functions".to_string()));
         }
-        // todo: disallow null?
+        if ty.nullable {
+            return Err(ParseError("expected a reference type, nullable types are not reference types".to_string()));
+        }
         Ok(ty)
     }
 
