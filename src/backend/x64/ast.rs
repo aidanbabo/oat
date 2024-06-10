@@ -1,6 +1,6 @@
 use internment::ArenaIntern;
 
-type Label<'arena> = ArenaIntern<'arena, str>;
+pub type Label<'arena> = ArenaIntern<'arena, str>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Reg {

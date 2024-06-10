@@ -9,6 +9,7 @@ type Layout<'ll> = HashMap<ll::Uid<'ll>, Op<'static>>;
 struct FunctionContext<'ll, 'asm> {
     arena: &'asm Arena<str>,
     layout: Layout<'ll>,
+    name: ll::Lbl<'ll>,
 }
 
 pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> {
@@ -19,7 +20,7 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
 
     assert!(ll.tdecls.is_empty(), "no support for tdecls");
     assert!(ll.gdecls.is_empty(), "no support for gdecls");
-    assert!(ll.edecls.is_empty(), "no support for edecls");
+    // assert!(ll.edecls.is_empty(), "no support for edecls");
 
     for (name, fdecl) in ll.fdecls {
         let (arg_layout, stack_layout) = layout(&fdecl);
@@ -27,6 +28,7 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
         let fctx = FunctionContext {
             arena,
             layout: stack_layout,
+            name,
         };
 
         let code_blocks = compile_function(fctx, arg_layout, name, fdecl);
@@ -102,6 +104,7 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Layout<'ll>, Layout<'ll>) {
 
     fn find_all_uids<'ll>(uids: &mut Vec<ll::Uid<'ll>>, b: &ll::Block<'ll>) {
         for (uid, _) in &b.insns {
+            // todo: this is a hack! more sophisticated filtering please!
             if !uid.starts_with('_') {
                 uids.push(*uid);
             }
@@ -128,7 +131,7 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Layout<'ll>, Layout<'ll>) {
 fn compile_labelled_block<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, label: ll::Uid<'ll>, block: ll::Block<'ll>) -> CodeBlock<'asm> {
     let b = CodeBlock {
         global: false,
-        label: fctx.arena.intern(&label),
+        label: mk_lbl(fctx, label),
         insns: Vec::new(),
     };
     compile_block(fctx, b, block)
@@ -171,11 +174,17 @@ fn compile_terminator<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, mut asm: Cod
             asm.insns.push(Insn::Pop(Op::Reg(Reg::Rbp)));
             asm.insns.push(Insn::Ret);
         }
-        ll::Terminator::Br(_) => todo!(),
+        ll::Terminator::Br(lbl) => {
+            asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(mk_lbl(fctx, lbl)))));
+        }
         ll::Terminator::Cbr(_, _, _) => todo!(),
     }
 
     asm
+}
+
+fn mk_lbl<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, lbl: ll::Lbl<'ll>) -> Label<'asm> {
+    fctx.arena.intern_string(format!("{}.{}", fctx.name, lbl))
 }
 
 fn compile_operand<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, dst: Op<'asm>, src: ll::Operand<'ll>) -> Insn<'asm> {

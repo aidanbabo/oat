@@ -134,7 +134,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
     }
 
     fn gensym(&mut self, s: &str) -> ArenaIntern<'ll, str> {
-        let s = format!("_{s}{}", self.sym_num);
+        let s = format!("{s}{}", self.sym_num);
         self.sym_num += 1;
         self.arena.intern_string(s)
     }
