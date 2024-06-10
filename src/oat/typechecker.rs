@@ -7,7 +7,7 @@ use super::ast::*;
 use super::Node;
 
 #[derive(Debug)]
-pub struct TypeError(String);
+pub struct TypeError(pub String);
 
 pub struct Context<'ast> {
     pub structs: HashMap<Ident<'ast>, Vec<(Ty<'ast>, Ident<'ast>)>>,

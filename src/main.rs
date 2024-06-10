@@ -15,6 +15,8 @@ struct Args {
     #[arg(long)]
     print_ll: bool,
     #[arg(long)]
+    print_asm: bool,
+    #[arg(long)]
     interpret_ll: bool,
     #[arg(long)]
     clang: bool,
@@ -49,8 +51,8 @@ fn main() {
 
         let tctx = match oat::oat::typecheck(&prog, &oat_arena) {
             Ok(tctx) => tctx,
-            Err(e) => {
-                eprintln!("{e:?}");
+            Err(oat::oat::TypeError(msg)) => {
+                eprintln!("Type Error: {msg}");
                 process::exit(1);
             }
         };
@@ -88,34 +90,54 @@ fn main() {
 
     let _ = fs::create_dir("output");
 
-    let base_name = args.path.file_stem().unwrap();
-    let mut path = PathBuf::from("output").join(base_name);
-    path.set_extension("ll");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&path)
-        .unwrap();
-    oat::llvm::write(file, &ll_prog).unwrap();
-
-    if args.clang {
-        let mut cmd = process::Command::new("clang");
-        cmd.arg(&path);
-        if ext == "oat" {
-            cmd.arg("runtime.c");
-        } else if ext == "ll" {
-            // todo: runtime support for ll files (tests)
-        }
-        let run = cmd
-            .arg("-Wno-override-module")
-            .spawn()
-            .unwrap()
-            .wait()
+    let clang_input_file_path = if args.clang {
+        let base_name = args.path.file_stem().unwrap();
+        let mut path = PathBuf::from("output").join(base_name);
+        path.set_extension("ll");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
             .unwrap();
-        if !run.success() {
-            std::process::exit(1);
+        oat::llvm::write(file, &ll_prog).unwrap();
+        path
+    } else {
+        let arena = Arena::new();
+        let asm_prog = oat::backend::x64::x64_from_llvm(ll_prog, &arena);
+
+        if args.print_asm {
+            oat::backend::x64::print(&asm_prog);
         }
+
+        let base_name = args.path.file_stem().unwrap();
+        let mut path = PathBuf::from("output").join(base_name);
+        path.set_extension("S");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap();
+        oat::backend::x64::write(file, &asm_prog).unwrap();
+        path
+    };
+
+    let mut cmd = process::Command::new("clang");
+    cmd.arg(&clang_input_file_path);
+    if ext == "oat" {
+        cmd.arg("runtime.c");
+    } else if ext == "ll" {
+        // todo: runtime support for ll files (tests)
+    }
+    let run = cmd
+        .arg("-Wno-override-module")
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+    if !run.success() {
+        std::process::exit(1);
     }
 }
 

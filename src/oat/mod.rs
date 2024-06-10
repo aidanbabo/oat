@@ -73,7 +73,9 @@ pub fn parse<'output>(input: &'_ str, arena: &'output Arena<str>) -> Result<ast:
     Ok(prog)
 }
 
-pub fn typecheck<'ast>(prog: &ast::Prog<'ast>, arena: &'ast Arena<str>) -> Result<typechecker::Context<'ast>, typechecker::TypeError> {
+pub use typechecker::TypeError;
+
+pub fn typecheck<'ast>(prog: &ast::Prog<'ast>, arena: &'ast Arena<str>) -> Result<typechecker::Context<'ast>, TypeError> {
     typechecker::check(prog, arena)
 }
 
