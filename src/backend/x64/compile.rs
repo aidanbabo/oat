@@ -56,7 +56,7 @@ fn compile_global<'asm>(arena: &'asm Arena<str>, ginit: ll::Ginit<'_>) -> Vec<Da
     }
 }
 
-fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Layout<'ll>, name: ll::Gid<'ll>, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock<'asm>> {
+fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Vec<(ll::Uid<'ll>, Op<'asm>)>, name: ll::Gid<'ll>, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock<'asm>> {
     let stack_size = fctx.layout.len();
 
     let mut b1 = CodeBlock {
@@ -70,7 +70,6 @@ fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Lay
     };
 
     // move register args to their stack slots so they don't get clobbered
-    // hashmaps have no order so this is kind of silly looking sometimes
     b1.insns.extend(
         arg_layout
             .into_iter()
@@ -90,7 +89,7 @@ fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Lay
     blocks
 }
 
-fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Layout<'ll>, Layout<'ll>) {
+fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op<'static>)>, Layout<'ll>) {
     let arg_layout = fdecl
         .params
         .iter()
