@@ -196,10 +196,11 @@ impl<'oat, 'll> Context<'oat, 'll> {
         assert!(self.globals.insert(v.name, (interned, ty)).is_none());
     }
 
-    fn global_string(&mut self, name: &str, mut s: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
-        s.push('\0');
+    fn global_string(&mut self, name: &str, s: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
+        // todo: why was this here? can't find any real breakage outside this method
+        // s.push('\0');
         let temp = self.gensym(&format!("{name}_tmp"));
-        let array_ty = llast::Ty::Array(s.len() as i64, Box::new(llast::Ty::I8));
+        let array_ty = llast::Ty::Array(s.len() as i64 + 1, Box::new(llast::Ty::I8));
         self.llprog.gdecls.push((temp, (array_ty.clone(), llast::Ginit::String(s))));
 
         let string_ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));

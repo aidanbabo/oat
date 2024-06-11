@@ -85,8 +85,8 @@ pub struct CodeBlock<'asm> {
 }
 
 #[derive(Debug)]
-pub enum Data {
-    Word(i64),
+pub enum Data<'asm> {
+    Quad(Imm<'asm>),
     String(String),
 }
 
@@ -94,7 +94,7 @@ pub enum Data {
 pub struct DataBlock<'asm> {
     pub global: bool,
     pub label: Label<'asm>,
-    pub data: Vec<Data>,
+    pub data: Vec<Data<'asm>>,
 }
 
 #[derive(Debug)]

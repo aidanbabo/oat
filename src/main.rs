@@ -131,7 +131,10 @@ fn main() {
         // todo: runtime support for ll files (tests)
     }
     let run = cmd
+        // todo: add triple
         .arg("-Wno-override-module")
+        .arg("-mstackrealign") // automatically realigns stack for "backward compatibility" 
+                               // i.e. allows us to be lazier
         .spawn()
         .unwrap()
         .wait()

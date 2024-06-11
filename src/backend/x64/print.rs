@@ -21,8 +21,20 @@ pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
     Ok(())
 }
 
-fn write_data_block<W: io::Write>(_w: &mut W, _db: &DataBlock) -> io::Result<()> {
-    todo!()
+fn write_data_block<W: io::Write>(w: &mut W, db: &DataBlock) -> io::Result<()> {
+    if db.global {
+        writeln!(w, "\t.globl {}", db.label)?;
+    }
+    writeln!(w, "{}:", db.label)?;
+    for datum in &db.data {
+        match datum {
+            Data::Quad(imm) => writeln!(w, "\t.quad\t{imm}")?,
+            // todo: escape?
+            Data::String(s) => writeln!(w, "\t.asciz\t\"{s}\"")?,
+        }
+    }
+
+    Ok(())
 }
 
 fn write_code_block<W: io::Write>(w: &mut W, cb: &CodeBlock) -> io::Result<()> {
@@ -68,6 +80,7 @@ fn write_insn<W: io::Write>(w: &mut W, insn: &Insn) -> io::Result<()> {
                     op
                 },
                 Insn::Call(op) => {
+                    write!(w, "callq\t")?;
                     op
                 }
                 _ => unreachable!(),

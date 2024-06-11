@@ -19,8 +19,16 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
     };
 
     assert!(ll.tdecls.is_empty(), "no support for tdecls");
-    assert!(ll.gdecls.is_empty(), "no support for gdecls");
     // assert!(ll.edecls.is_empty(), "no support for edecls");
+
+    for (name, (_ty, ginit)) in ll.gdecls {
+        let block = DataBlock {
+            global: true,
+            label: arena.intern(&name),
+            data: compile_global(arena, ginit),
+        };
+        p.data.push(block);
+    }
 
     for (name, fdecl) in ll.fdecls {
         let (arg_layout, stack_layout) = layout(&fdecl);
@@ -35,6 +43,17 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
         p.code.extend(code_blocks);
     }
     p
+}
+
+fn compile_global<'asm>(arena: &'asm Arena<str>, ginit: ll::Ginit<'_>) -> Vec<Data<'asm>> {
+    match ginit {
+        ll::Ginit::Null => vec![Data::Quad(Imm::Word(0))],
+        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(arena.intern(&gid)))],
+        ll::Ginit::Int(i) => vec![Data::Quad(Imm::Word(i))],
+        ll::Ginit::String(s) => vec![Data::String(s)],
+        ll::Ginit::Array(gs) | ll::Ginit::Struct(gs) => gs.into_iter().flat_map(|(_, g)| compile_global(arena, g)).collect(),
+        ll::Ginit::Bitcast(_, g, _) => compile_global(arena, *g),
+    }
 }
 
 fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Layout<'ll>, name: ll::Gid<'ll>, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock<'asm>> {
@@ -66,8 +85,7 @@ fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Lay
     blocks.push(entry);
 
     for (lbl, b) in fdecl.cfg.blocks {
-        let compiled_block = compile_labelled_block(&fctx, lbl, b);
-        blocks.push(compiled_block);
+        blocks.push(compile_labelled_block(&fctx, lbl, b));
     }
     blocks
 }
@@ -164,7 +182,7 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
         ll::Insn::Alloca(_) => {
-            asm.insns.push(Insn::Sub(Op::Imm(Imm::Word(8)), Op::Reg(Reg::Rsp)));
+            asm.insns.push(Insn::Push(Op::Imm(Imm::Word(0))));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rsp), fctx.layout[&uid]));
         }
         ll::Insn::Load(_, op) => {
@@ -185,12 +203,36 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             asm.insns.push(Insn::Set(compile_cnd(cnd), Op::Reg(Reg::Rax)));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
-        ll::Insn::Call(_, _, _) => todo!(),
+        ll::Insn::Call(ret_ty, fname, args) => {
+            for (i, (_, arg)) in args.into_iter().enumerate().rev() {
+                let insn = match i {
+                    0 => compile_operand(fctx, Op::Reg(Reg::Rdi), arg),
+                    1 => compile_operand(fctx, Op::Reg(Reg::Rsi), arg),
+                    2 => compile_operand(fctx, Op::Reg(Reg::Rdx), arg),
+                    3 => compile_operand(fctx, Op::Reg(Reg::Rcx), arg),
+                    4 => compile_operand(fctx, Op::Reg(Reg::R8), arg),
+                    5 => compile_operand(fctx, Op::Reg(Reg::R9), arg),
+                    _ => Insn::Push(translate_op(fctx, arg)),
+                };
+                asm.insns.push(insn);
+            }
+
+            match fname {
+                ll::Operand::Gid(lbl) => {
+                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(fctx.arena.intern(&lbl)))));
+                }
+                _ => todo!("haven't implemented indirect function calls (via ptr)"),
+            }
+
+            if ret_ty != ll::Ty::Void {
+                asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
+            }
+        }
         ll::Insn::Bitcast(_, o, _) => {
             asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), o));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
-        ll::Insn::Gep(_, _, _) => todo!(),
+        ll::Insn::Gep(_, _, _) => todo!("gep is unimplemented"),
     }
 }
 
