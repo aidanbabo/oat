@@ -146,20 +146,50 @@ fn compile_block<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, mut asm: CodeBloc
 
 fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBlock<'asm>, uid: ll::Uid<'ll>, insn: ll::Insn<'ll>) {
     match insn {
-        ll::Insn::Binop(_, _, _, _) => todo!(),
+        ll::Insn::Binop(bop, _, lhs, rhs) => {
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), lhs));
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rcx), rhs));
+            let bop = match bop {
+                ll::Bop::Add => Insn::Add(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Sub => Insn::Sub(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Mul => Insn::Imul(Op::Reg(Reg::Rcx), Reg::Rax),
+                ll::Bop::Shl => Insn::Shl(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Lshr => Insn::Shr(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Ashr => Insn::Sar(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::And => Insn::And(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Or => Insn::Or(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Xor => Insn::Xor(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+            };
+            asm.insns.push(bop);
+            asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
+        }
         ll::Insn::Alloca(_) => {
             asm.insns.push(Insn::Sub(Op::Imm(Imm::Word(8)), Op::Reg(Reg::Rsp)));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rsp), fctx.layout[&uid]));
         }
-        ll::Insn::Load(_, _) => todo!(),
+        ll::Insn::Load(_, op) => {
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), op));
+            asm.insns.push(Insn::Mov(Op::Ind2(Reg::Rax), Op::Reg(Reg::Rax)));
+            asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
+        }
         ll::Insn::Store(_, src, dst) => {
             asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), src));
             asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rcx), dst));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), Op::Ind2(Reg::Rcx)));
         }
-        ll::Insn::Icmp(_, _, _, _) => todo!(),
+        ll::Insn::Icmp(cnd, _, lhs, rhs) => {
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rdi), lhs));
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rsi), rhs));
+            asm.insns.push(Insn::Xor(Op::Reg(Reg::Rax), Op::Reg(Reg::Rax)));
+            asm.insns.push(Insn::Cmp(Op::Reg(Reg::Rsi), Op::Reg(Reg::Rdi)));
+            asm.insns.push(Insn::Set(compile_cnd(cnd), Op::Reg(Reg::Rax)));
+            asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
+        }
         ll::Insn::Call(_, _, _) => todo!(),
-        ll::Insn::Bitcast(_, _, _) => todo!(),
+        ll::Insn::Bitcast(_, o, _) => {
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), o));
+            asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
+        }
         ll::Insn::Gep(_, _, _) => todo!(),
     }
 }
@@ -177,10 +207,26 @@ fn compile_terminator<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, mut asm: Cod
         ll::Terminator::Br(lbl) => {
             asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(mk_lbl(fctx, lbl)))));
         }
-        ll::Terminator::Cbr(_, _, _) => todo!(),
+        ll::Terminator::Cbr(op, true_lbl, false_lbl) => {
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), op));
+            asm.insns.push(Insn::Cmp(Op::Imm(Imm::Word(0)), Op::Reg(Reg::Rax)));
+            asm.insns.push(Insn::J(Cond::Eq, Op::Imm(Imm::Lbl(mk_lbl(fctx, false_lbl)))));
+            asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(mk_lbl(fctx, true_lbl)))));
+        }
     }
 
     asm
+}
+
+fn compile_cnd(cnd: ll::Cnd) -> Cond {
+    match cnd {
+        ll::Cnd::Eq => Cond::Eq,
+        ll::Cnd::Ne => Cond::Neq,
+        ll::Cnd::Slt => Cond::Lt,
+        ll::Cnd::Sle => Cond::Le,
+        ll::Cnd::Sgt => Cond::Gt,
+        ll::Cnd::Sge => Cond::Ge,
+    }
 }
 
 fn mk_lbl<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, lbl: ll::Lbl<'ll>) -> Label<'asm> {

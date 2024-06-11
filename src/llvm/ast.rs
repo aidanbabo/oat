@@ -62,6 +62,7 @@ pub enum Insn<'a> {
     Binop(Bop, Ty<'a>, Operand<'a>, Operand<'a>),
     Alloca(Ty<'a>),
     Load(Ty<'a>, Operand<'a>),
+    /// the type of the stored variable, the elem to store, and then the location
     Store(Ty<'a>, Operand<'a>, Operand<'a>),
     Icmp(Cnd, Ty<'a>, Operand<'a>, Operand<'a>),
     Call(Ty<'a>, Operand<'a>, Vec<(Ty<'a>, Operand<'a>)>),
@@ -71,8 +72,12 @@ pub enum Insn<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum Terminator<'a> {
+    /// return type and optional return value
+    /// required if the return type is not void
     Ret(Ty<'a>, Option<Operand<'a>>),
+    /// label to branch to
     Br(Lbl<'a>),
+    /// the operand to branch on and then the true and false labels
     Cbr(Operand<'a>, Lbl<'a>, Lbl<'a>),
 }
 

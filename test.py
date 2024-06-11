@@ -257,10 +257,6 @@ def main():
     if args.list:
         list_tests(tests)
     else:
-        if not (args.interpret_ll or args.clang):
-            eprint('must run through test through interpreter or use clang backend')
-            exit(1)
-
         run_tests(tests)
 
 if __name__ == '__main__':

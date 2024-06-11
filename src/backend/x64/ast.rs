@@ -66,6 +66,7 @@ pub enum Insn<'asm> {
     Shr(Op<'asm>, Op<'asm>),
     Set(Cond, Op<'asm>),
     Lea(Op<'asm> /* Ind */, Op<'asm>),
+    /// src -> dest
     Mov(Op<'asm>, Op<'asm>),
     Push(Op<'asm>),
     Pop(Op<'asm>),

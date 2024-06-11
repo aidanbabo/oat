@@ -40,31 +40,31 @@ fn write_code_block<W: io::Write>(w: &mut W, cb: &CodeBlock) -> io::Result<()> {
 
 fn write_insn<W: io::Write>(w: &mut W, insn: &Insn) -> io::Result<()> {
     match insn {
-        Insn::Neg(op) => write!(w, "negq {op}"),
-        Insn::Add(o1, o2) => write!(w, "addq {o1}, {o2}"),
-        Insn::Sub(o1, o2) => write!(w, "subq {o1}, {o2}"),
-        Insn::Imul(o1, o2) => write!(w, "imulq {o1}, {o2}"),
-        Insn::Inc(o) => write!(w, "incq {o}"),
-        Insn::Dec(o) => write!(w, "decq {o}"),
-        Insn::Not(o) => write!(w, "notq {o}"),
-        Insn::And(o1, o2) => write!(w, "andq {o1}, {o2}"),
-        Insn::Or(o1, o2) => write!(w, "orq {o1}, {o2}"),
-        Insn::Xor(o1, o2) => write!(w, "xorq {o1}, {o2}"),
-        Insn::Lea(o1, o2) => write!(w, "leaq {o1}, {o2}"),
-        Insn::Mov(o1, o2) => write!(w, "movq {o1}, {o2}"),
-        Insn::Push(o) => write!(w, "pushq {o}"),
-        Insn::Pop(o) => write!(w, "popq {o}"),
-        Insn::Cmp(o1, o2) => write!(w, "cmpq {o1}, {o2}"),
+        Insn::Neg(op) => write!(w, "negq\t{op}"),
+        Insn::Add(o1, o2) => write!(w, "addq\t{o1}, {o2}"),
+        Insn::Sub(o1, o2) => write!(w, "subq\t{o1}, {o2}"),
+        Insn::Imul(o1, o2) => write!(w, "imulq\t{o1}, {o2}"),
+        Insn::Inc(o) => write!(w, "incq\t{o}"),
+        Insn::Dec(o) => write!(w, "decq\t{o}"),
+        Insn::Not(o) => write!(w, "notq\t{o}"),
+        Insn::And(o1, o2) => write!(w, "andq\t{o1}, {o2}"),
+        Insn::Or(o1, o2) => write!(w, "orq\t{o1}, {o2}"),
+        Insn::Xor(o1, o2) => write!(w, "xorq\t{o1}, {o2}"),
+        Insn::Lea(o1, o2) => write!(w, "leaq\t{o1}, {o2}"),
+        Insn::Mov(o1, o2) => write!(w, "movq\t{o1}, {o2}"),
+        Insn::Push(o) => write!(w, "pushq\t{o}"),
+        Insn::Pop(o) => write!(w, "popq\t{o}"),
+        Insn::Cmp(o1, o2) => write!(w, "cmpq\t{o1}, {o2}"),
         Insn::Ret => write!(w, "retq"),
         // special handling for jumps
         Insn::Jmp(..) | Insn::J(..) | Insn::Call(..) => {
             let op = match insn {
                 Insn::Jmp(op) => {
-                    write!(w, "jmp ")?;
+                    write!(w, "jmp\t")?;
                     op
                 }
                 Insn::J(cnd, op) => {
-                    write!(w, "j {cnd} ")?;
+                    write!(w, "j{cnd}\t")?;
                     op
                 },
                 Insn::Call(op) => {
@@ -82,12 +82,22 @@ fn write_insn<W: io::Write>(w: &mut W, insn: &Insn) -> io::Result<()> {
             }
         }
         // special handling for shifts
-        Insn::Sar(_, _) => todo!(),
-        Insn::Shl(_, _) => todo!(),
-        Insn::Shr(_, _) => todo!(),
+        Insn::Sar(o1, o2) | Insn::Shl(o1, o2) | Insn::Shr(o1, o2) => {
+            let opcode = match insn {
+                Insn::Sar(..) => "sarq",
+                Insn::Shl(..) => "shlq",
+                Insn::Shr(..) => "shrq",
+                _ => unreachable!(),
+            };
+            match o1 {
+                Op::Imm(_) => write!(w, "{opcode}\t{o1}, {o2}"),
+                Op::Reg(Reg::Rcx) => write!(w, "{opcode}\t%cl, {o2}"),
+                _ => unreachable!("shift operation with invalid operands"),
+            }
+        }
         // special handling for byte registers
         Insn::Set(cnd, op) => {
-            write!(w, "setq {cnd} ")?;
+            write!(w, "set{cnd}\t")?;
             match op {
                 Op::Reg(r) => write!(w, "{}", byte_reg(*r)),
                 _ => write!(w, "{op}"),
