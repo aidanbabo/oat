@@ -11,6 +11,7 @@ struct FunctionContext<'ll, 'asm> {
     arena: &'asm Arena<str>,
     layout: Layout<'ll>,
     name: ll::Lbl<'ll>,
+    tdecls: &'ll HashMap<ll::Uid<'ll>, ll::Ty<'ll>>,
 }
 
 pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> {
@@ -19,13 +20,12 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
         data: Vec::new(),
     };
 
-    assert!(ll.tdecls.is_empty(), "no support for tdecls");
     // assert!(ll.edecls.is_empty(), "no support for edecls");
 
     for (name, (_ty, ginit)) in ll.gdecls {
         let block = DataBlock {
             global: true,
-            label: arena.intern(&name),
+            label: arena.intern_string(platform::mangle(&name)),
             data: compile_global(arena, ginit),
         };
         p.data.push(block);
@@ -38,6 +38,7 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
             arena,
             layout: stack_layout,
             name,
+            tdecls: &ll.tdecls,
         };
 
         let code_blocks = compile_function(fctx, arg_layout, name, fdecl);
@@ -232,7 +233,58 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), o));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
-        ll::Insn::Gep(_, _, _) => todo!("gep is unimplemented"),
+        ll::Insn::Gep(t, op, path) => {
+            fn size_ty<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, ty: &ll::Ty) -> i64 {
+                match ty {
+                    ll::Ty::Void | ll::Ty::I8 | ll::Ty::Fun(..) => panic!("undefined size, what the hell"),
+                    ll::Ty::I1 | ll::Ty::I64 | ll::Ty::Ptr(..) => 8,
+                    ll::Ty::Struct(ts) => ts.iter().map(|t| size_ty(fctx, t)).sum(),
+                    ll::Ty::Array(n, t) => n * size_ty(fctx, t),
+                    ll::Ty::Named(name) => size_ty(fctx, &fctx.tdecls[&name]),
+                }
+            }
+
+            fn index_into<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, ts: &[ll::Ty<'ll>], n: i64) -> i64 {
+                ts
+                    .iter()
+                    .take(n as usize)
+                    .map(|t| size_ty(fctx, t))
+                    .sum()
+            }
+
+            fn path_through<'ll, 'asm>(asm: &mut CodeBlock<'asm>, fctx: &FunctionContext<'ll, 'asm>, curr_ty: ll::Ty<'ll>, p: ll::Operand<'ll>) -> ll::Ty<'ll> {
+                match curr_ty {
+                    ll::Ty::Struct(mut ts) => {
+                            let ll::Operand::Const(n) = p else { panic!("non-const op for struct index") };
+                            let offset = index_into(fctx, &ts, n);
+                            asm.insns.push(Insn::Add(Op::Imm(Imm::Word(offset)), Op::Reg(Reg::Rax)));
+                            // todo: gross? i can't just use indexing
+                            ts.swap_remove(n as usize)
+                    }
+                    ll::Ty::Array(_, new_ty) => {
+                        if let ll::Operand::Const(ix) = p {
+                            let offset = size_ty(fctx, &new_ty) * ix;
+                            asm.insns.push(Insn::Add(Op::Imm(Imm::Word(offset)), Op::Reg(Reg::Rax)));
+                            *new_ty
+                        } else {
+                            asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), Op::Reg(Reg::Rcx)));
+                            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), p));
+                            asm.insns.push(Insn::Imul(Op::Imm(Imm::Word(size_ty(fctx, &new_ty))), Reg::Rax));
+                            asm.insns.push(Insn::Add(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)));
+                            *new_ty
+                        }
+                    }
+                    ll::Ty::Named(name) => path_through(asm, fctx, fctx.tdecls[&name].clone(), p),
+                    _ => unreachable!("bad gep op"),
+                }
+            }
+
+            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), op));
+            path
+                .into_iter()
+                .fold(ll::Ty::Array(0, Box::new(t)), |ty, p| path_through(asm, fctx, ty, p));
+            asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
+        }
     }
 }
 
