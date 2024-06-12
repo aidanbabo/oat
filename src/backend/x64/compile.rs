@@ -220,9 +220,13 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
 
             match fname {
                 ll::Operand::Gid(lbl) => {
+                    // fastpath
                     asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(fctx.arena.intern_string(platform::mangle(&lbl))))));
                 }
-                _ => todo!("haven't implemented indirect function calls (via ptr)"),
+                _ => {
+                    asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), fname));
+                    asm.insns.push(Insn::Call(Op::Reg(Reg::Rax)));
+                }
             }
 
             if ret_ty != ll::Ty::Void {

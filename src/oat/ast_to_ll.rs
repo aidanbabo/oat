@@ -282,7 +282,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             return op
         }
 
-        let bitcast = self.gensym("_coerce");
+        let bitcast = self.gensym("coerce");
         fun_ctx.push_insn(bitcast, llast::Insn::Bitcast(src, op, dst.clone()));
         llast::Operand::Id(bitcast)
     }
@@ -341,7 +341,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Stmt::IfNull(ty, name, exp, if_blk, else_blk) => {
                 let (cnd_op, cnd_ty) = self.exp(fun_ctx, exp.t);
-                let null_check_uid = self.gensym("_null_check");
+                let null_check_uid = self.gensym("null_check");
                 let null_check = llast::Insn::Icmp(llast::Cnd::Ne, cnd_ty.clone(), cnd_op, llast::Operand::Null);
                 fun_ctx.push_insn(null_check_uid, null_check);
 
@@ -495,7 +495,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 let init_after_lbl = self.gensym("init_after");
 
                 // set up index var
-                let ix_alloca_uid = self.gensym("_init_ix_alloca");
+                let ix_alloca_uid = self.gensym("init_ix_alloca");
                 fun_ctx.push_insn(ix_alloca_uid, llast::Insn::Alloca(llast::Ty::I64));
                 let ix_alloca_op = llast::Operand::Id(ix_alloca_uid);
                 fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(llast::Ty::I64, llast::Operand::Const(0), ix_alloca_op));
@@ -503,10 +503,10 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
                 // exit condition
                 fun_ctx.start_block(init_top_lbl);
-                let ix_load_uid = self.gensym("_init_ix_load");
+                let ix_load_uid = self.gensym("init_ix_load");
                 fun_ctx.push_insn(ix_load_uid, llast::Insn::Load(llast::Ty::I64, ix_alloca_op));
                 let ix_load_op = llast::Operand::Id(ix_load_uid);
-                let cnd_uid = self.gensym("_init_ix_check");
+                let cnd_uid = self.gensym("init_ix_check");
                 fun_ctx.push_insn(cnd_uid, llast::Insn::Icmp(llast::Cnd::Slt, llast::Ty::I64, ix_load_op, len_op));
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(llast::Operand::Id(cnd_uid), init_body_lbl, init_after_lbl));
 
@@ -515,12 +515,12 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 fun_ctx.locals.insert(name, (ix_alloca_uid, llast::Ty::I64));
                 let (e_op, e_ty) = self.exp(fun_ctx, init.t);
                 let e_op = self.typecast(fun_ctx, e_ty, e_op, arr_el_ty.clone());
-                let gep_uid = self.gensym("_init_assn");
+                let gep_uid = self.gensym("init_assn");
                 fun_ctx.push_insn(gep_uid, llast::Insn::Gep(array_base_ty, array_op, vec![llast::Operand::Const(0), llast::Operand::Const(1), ix_load_op]));
                 fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(arr_el_ty, e_op, llast::Operand::Id(gep_uid)));
 
                 // update
-                let update_uid = self.gensym("_init_ix_update");
+                let update_uid = self.gensym("init_ix_update");
                 fun_ctx.push_insn(update_uid, llast::Insn::Binop(llast::Bop::Add, llast::Ty::I64, ix_load_op, llast::Operand::Const(1)));
                 fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(llast::Ty::I64, llast::Operand::Id(update_uid), ix_alloca_op));
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(init_top_lbl));
@@ -533,9 +533,9 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 let (array_op, array_ty) = self.exp(fun_ctx, e.t);
                 let llast::Ty::Ptr(array_base_ty) = array_ty else { unreachable!() };
                 let gep = llast::Insn::Gep(*array_base_ty, array_op, vec![llast::Operand::Const(0), llast::Operand::Const(0)]);
-                let len_ptr_uid = self.gensym("_len_ptr");
+                let len_ptr_uid = self.gensym("len_ptr");
                 fun_ctx.push_insn(len_ptr_uid, gep);
-                let uid = self.gensym("_len");
+                let uid = self.gensym("len");
                 fun_ctx.push_insn(uid, llast::Insn::Load(llast::Ty::I64, llast::Operand::Id(len_ptr_uid)));
                 (llast::Operand::Id(uid), llast::Ty::I64)
             }
@@ -547,7 +547,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
                 let struct_size_bytes = fields.len() * 8;
                 let (struct_storage_op_raw, malloc_ty) = self.call_internal(fun_ctx, "oat_malloc", &[llast::Operand::Const(struct_size_bytes as i64)]);
-                let struct_uid = self.gensym("_struct_ptr");
+                let struct_uid = self.gensym("struct_ptr");
                 fun_ctx.push_insn(struct_uid, llast::Insn::Bitcast(malloc_ty, struct_storage_op_raw, struct_ty.clone()));
                 let struct_ptr = llast::Operand::Id(struct_uid);
 
@@ -558,7 +558,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
                     let (op, init_ty) = self.exp(fun_ctx, exp.t);
                     let op = self.typecast(fun_ctx, init_ty, op, ty.clone());
 
-                    let gep_uid = self.gensym(&format!("_{struct_name}.{name}_init"));
+                    let gep_uid = self.gensym(&format!("{struct_name}.{name}_init"));
                     fun_ctx.push_insn(gep_uid, llast::Insn::Gep(struct_base_ty.clone(), struct_ptr, vec![llast::Operand::Const(0), llast::Operand::Const(ix as i64)]));
                     fun_ctx.push_insn(self.gensym("_"), llast::Insn::Store(ty, op, llast::Operand::Id(gep_uid)));
                 }
@@ -676,7 +676,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 let llast::Ty::Ptr(p) = &struct_ty else { unreachable!() };
                 let struct_base_ty = *p.clone();
                 let llast::Ty::Named(struct_name) = &struct_base_ty else { unreachable!() };
-                let gep_uid = self.gensym(&format!("_{struct_name}.{field_name}"));
+                let gep_uid = self.gensym(&format!("{struct_name}.{field_name}"));
 
                 let fields = &self.structs[&self.ll_to_oat_structs[struct_name]];
                 let index = fields.iter().position(|(_, n)| n == &field_name).unwrap();
