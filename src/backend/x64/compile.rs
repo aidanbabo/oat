@@ -2,6 +2,7 @@ use internment::Arena;
 use std::collections::HashMap;
 
 use crate::llvm::ast as ll;
+use crate::backend::platform;
 use super::ast::*;
 
 type Layout<'ll> = HashMap<ll::Uid<'ll>, Op<'static>>;
@@ -48,7 +49,7 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
 fn compile_global<'asm>(arena: &'asm Arena<str>, ginit: ll::Ginit<'_>) -> Vec<Data<'asm>> {
     match ginit {
         ll::Ginit::Null => vec![Data::Quad(Imm::Word(0))],
-        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(arena.intern(&gid)))],
+        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(arena.intern_string(platform::mangle(&gid))))],
         ll::Ginit::Int(i) => vec![Data::Quad(Imm::Word(i))],
         ll::Ginit::String(s) => vec![Data::String(s)],
         ll::Ginit::Array(gs) | ll::Ginit::Struct(gs) => gs.into_iter().flat_map(|(_, g)| compile_global(arena, g)).collect(),
@@ -61,7 +62,7 @@ fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Vec
 
     let mut b1 = CodeBlock {
         global: true,
-        label: fctx.arena.intern(&name),
+        label: fctx.arena.intern_string(platform::mangle(&name)),
         insns: vec![
             Insn::Push(Op::Reg(Reg::Rbp)),
             Insn::Mov(Op::Reg(Reg::Rsp), Op::Reg(Reg::Rbp)),
@@ -218,7 +219,7 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
 
             match fname {
                 ll::Operand::Gid(lbl) => {
-                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(fctx.arena.intern(&lbl)))));
+                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(fctx.arena.intern_string(platform::mangle(&lbl))))));
                 }
                 _ => todo!("haven't implemented indirect function calls (via ptr)"),
             }
@@ -286,7 +287,7 @@ fn translate_op<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, op: ll::Operand<'l
         ll::Operand::Null => Op::Imm(Imm::Word(0)),
         ll::Operand::Const(c) => Op::Imm(Imm::Word(c)),
         // todo: mangle?
-        ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(fctx.arena.intern(&gid)), Reg::Rip),
+        ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(fctx.arena.intern_string(platform::mangle(&gid))), Reg::Rip),
         ll::Operand::Id(uid) => fctx.layout[&uid],
     }
 }

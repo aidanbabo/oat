@@ -22,6 +22,7 @@ struct Args {
     clang: bool,
     #[arg(long)]
     check: bool,
+    // todo: add cross compilation support?
 }
 
 fn main() {
