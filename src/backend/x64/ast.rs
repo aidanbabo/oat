@@ -48,7 +48,7 @@ pub enum Cond {
     Ge,
 }
 
-// at&t :(
+/// at&t :(
 #[derive(Clone, Copy, Debug)]
 pub enum Insn<'asm> {
     Neg(Op<'asm>), // Reg?
@@ -65,7 +65,8 @@ pub enum Insn<'asm> {
     Shl(Op<'asm>, Op<'asm>),
     Shr(Op<'asm>, Op<'asm>),
     Set(Cond, Op<'asm>),
-    Lea(Op<'asm> /* Ind */, Op<'asm>),
+    /// Ind, op
+    Lea(Op<'asm>, Op<'asm>),
     /// src -> dest
     Mov(Op<'asm>, Op<'asm>),
     Push(Op<'asm>),

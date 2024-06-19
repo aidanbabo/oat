@@ -184,7 +184,13 @@ impl<'a> fmt::Display for Ginit<'a> {
             Ginit::Null => write!(f, "null"),
             Ginit::Gid(g) => write!(f, "@{g}"),
             Ginit::Int(i) => write!(f, "{i}"),
-            Ginit::String(s) => write!(f, "c\"{s}\\00\""),
+            Ginit::String(s) => {
+                if s.ends_with('\0') {
+                    write!(f, "c\"{s}\"")
+                } else {
+                    write!(f, "c\"{s}\\00\"")
+                }
+            },
             Ginit::Array(gis) => {
                 write!(f, "[")?;
                 write_separated(f, ", ", gis.iter().map(|t| Separated(" ", t)))?;

@@ -30,7 +30,12 @@ fn write_data_block<W: io::Write>(w: &mut W, db: &DataBlock) -> io::Result<()> {
         match datum {
             Data::Quad(imm) => writeln!(w, "\t.quad\t{imm}")?,
             // todo: escape?
-            Data::String(s) => writeln!(w, "\t.asciz\t\"{s}\"")?,
+            Data::String(s) => if s.ends_with('\0') {
+                let s = &s[..s.len() - 1];
+                writeln!(w, "\t.asciz\t\"{s}\"")?
+            } else {
+                writeln!(w, "\t.ascii\t\"{s}\"")?
+            }
         }
     }
 

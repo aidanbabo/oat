@@ -238,17 +238,20 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
         ll::Insn::Gep(t, op, path) => {
-            fn size_ty<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, ty: &ll::Ty) -> i64 {
+            /// this is the size as determined by llvmlite, so it's a little nonsensical
+            /// this also means we are abi incompatible with code compiled via the --clang option,
+            /// which is fine ig
+            fn size_ty<'ll>(fctx: &FunctionContext<'ll, '_>, ty: &ll::Ty<'ll>) -> i64 {
                 match ty {
                     ll::Ty::Void | ll::Ty::I8 | ll::Ty::Fun(..) => panic!("undefined size, what the hell"),
                     ll::Ty::I1 | ll::Ty::I64 | ll::Ty::Ptr(..) => 8,
                     ll::Ty::Struct(ts) => ts.iter().map(|t| size_ty(fctx, t)).sum(),
                     ll::Ty::Array(n, t) => n * size_ty(fctx, t),
-                    ll::Ty::Named(name) => size_ty(fctx, &fctx.tdecls[&name]),
+                    ll::Ty::Named(name) => size_ty(fctx, &fctx.tdecls[name]),
                 }
             }
 
-            fn index_into<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, ts: &[ll::Ty<'ll>], n: i64) -> i64 {
+            fn index_into<'ll>(fctx: &FunctionContext<'ll, '_>, ts: &[ll::Ty<'ll>], n: i64) -> i64 {
                 ts
                     .iter()
                     .take(n as usize)
@@ -261,14 +264,18 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
                     ll::Ty::Struct(mut ts) => {
                             let ll::Operand::Const(n) = p else { panic!("non-const op for struct index") };
                             let offset = index_into(fctx, &ts, n);
-                            asm.insns.push(Insn::Add(Op::Imm(Imm::Word(offset)), Op::Reg(Reg::Rax)));
-                            // todo: gross? i can't just use indexing
+                            if offset != 0 {
+                                asm.insns.push(Insn::Add(Op::Imm(Imm::Word(offset)), Op::Reg(Reg::Rax)));
+                            }
+                            // gross? i can't just use indexing
                             ts.swap_remove(n as usize)
                     }
                     ll::Ty::Array(_, new_ty) => {
                         if let ll::Operand::Const(ix) = p {
                             let offset = size_ty(fctx, &new_ty) * ix;
-                            asm.insns.push(Insn::Add(Op::Imm(Imm::Word(offset)), Op::Reg(Reg::Rax)));
+                            if offset != 0 {
+                                asm.insns.push(Insn::Add(Op::Imm(Imm::Word(offset)), Op::Reg(Reg::Rax)));
+                            }
                             *new_ty
                         } else {
                             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), Op::Reg(Reg::Rcx)));
