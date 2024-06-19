@@ -459,7 +459,7 @@ fn global<'ast>(g: &Gdecl<'ast>, ctx: &Context<'ast>) -> Result<(Ident<'ast>, Ty
 }
 
 fn function_header<'ast>(f: &Fdecl<'ast>) -> Result<(Ident<'ast>, Ty<'ast>), TypeError> {
-    // todo: not really a type error
+    // todo: not really a type error now is it
     let set: HashSet<_> = f.args.iter().map(|(_, n)| n).collect();
     if set.len() != f.args.len() {
         return Err(TypeError("cannot have two function parameters with the same name".to_string()));

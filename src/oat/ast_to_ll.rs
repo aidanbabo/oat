@@ -49,6 +49,20 @@ impl<'oat, 'll> FunContext<'oat, 'll> {
     }
 }
 
+fn tipe<'ll>(arena: &'ll Arena<str>, ot: oast::Ty<'_>) -> llast::Ty<'ll> {
+    use oast::TyKind as TK;
+    use llast::Ty as Lty;
+    match ot.kind {
+        TK::Void => Lty::Void,
+        TK::Bool => Lty::I1,
+        TK::Int => Lty::I64,
+        TK::String => Lty::Ptr(Box::new(Lty::I8)),
+        TK::Struct(name) => Lty::Ptr(Box::new(Lty::Named(arena.intern(&name)))),
+        TK::Array(t) => Lty::Ptr(Box::new(Lty::Struct(vec![Lty::I64, Lty::Array(0, Box::new(tipe(arena, *t)))]))),
+        TK::Fun(args, ret) => Lty::Ptr(Box::new(Lty::Fun(args.into_iter().map(|t| tipe(arena, t)).collect(), Box::new(tipe(arena, *ret))))),
+    }
+}
+
 pub struct Context<'oat, 'll> {
     llprog: llast::Prog<'ll>,
     globals: HashMap<oast::Ident<'oat>, (llast::Gid<'ll>, llast::Ty<'ll>)>,
@@ -65,6 +79,11 @@ pub struct Context<'oat, 'll> {
 
 impl<'oat, 'll> Context<'oat, 'll> {
     pub fn new(tctx: typechecker::Context<'oat>, arena: &'ll Arena<str>, oat_arena: &'oat Arena<str>) -> Self {
+        let structs: HashMap<_, _> = tctx.structs.into_iter().map(|(n, fs)| {
+            let pairs = fs.into_iter().map(|(ty, n)| (tipe(arena, ty), n)).collect();
+            (n, pairs)
+        }).collect();
+
         let mut ctx = Context {
             llprog: llast::Prog {
                 tdecls: Default::default(),
@@ -74,24 +93,16 @@ impl<'oat, 'll> Context<'oat, 'll> {
             },
             globals: Default::default(),
             sym_num: 0,
-            structs: Default::default(),
-            ll_to_oat_structs: Default::default(),
+            ll_to_oat_structs: structs.keys().map(|oname| (arena.intern(oname), *oname)).collect(),
+            structs,
             arena,
         };
-
-        // todo: this is dumb
-        ctx.structs = tctx.structs.into_iter().map(|(n, fs)| {
-            let pairs = fs.into_iter().map(|(ty, n)| (ctx.tipe(ty), n)).collect();
-            (n, pairs)
-        }).collect();
-        // todo: even dumber lmao
-        ctx.ll_to_oat_structs = ctx.structs.keys().map(|oname| (arena.intern(oname), *oname)).collect();
 
         ctx.llprog.edecls.push((arena.intern("oat_assert_array_length"), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
         ctx.llprog.edecls.push((arena.intern("oat_alloc_array"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
         ctx.llprog.edecls.push((arena.intern("oat_malloc"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
         for (name, ty) in typechecker::BUILTINS.iter() {
-            let ty = ctx.tipe(ty.clone());
+            let ty = tipe(arena, ty.clone());
             let llast::Ty::Ptr(ty) = ty else { unreachable!() };
             let name = arena.intern(name);
             ctx.llprog.edecls.push((name, (*ty).clone()));
@@ -119,20 +130,6 @@ impl<'oat, 'll> Context<'oat, 'll> {
         self.llprog
     }
 
-    fn tipe(&mut self, ot: oast::Ty<'oat>) -> llast::Ty<'ll> {
-        use oast::TyKind as TK;
-        use llast::Ty as Lty;
-        match ot.kind {
-            TK::Void => Lty::Void,
-            TK::Bool => Lty::I1,
-            TK::Int => Lty::I64,
-            TK::String => Lty::Ptr(Box::new(Lty::I8)),
-            TK::Struct(name) => Lty::Ptr(Box::new(Lty::Named(self.arena.intern(&name)))),
-            TK::Array(t) => Lty::Ptr(Box::new(Lty::Struct(vec![Lty::I64, Lty::Array(0, Box::new(self.tipe(*t)))]))),
-            TK::Fun(args, ret) => Lty::Ptr(Box::new(Lty::Fun(args.into_iter().map(|t| self.tipe(t)).collect(), Box::new(self.tipe(*ret))))),
-        }
-    }
-
     fn gensym(&mut self, s: &str) -> ArenaIntern<'ll, str> {
         let s = format!("{s}{}", self.sym_num);
         self.sym_num += 1;
@@ -141,7 +138,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
     fn gexp(&mut self, exp: oast::Exp<'oat>, name: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
         let (ty, op) = match exp {
-            oast::Exp::Null(t) => (self.tipe(t), llast::Ginit::Null),
+            oast::Exp::Null(t) => (tipe(self.arena, t), llast::Ginit::Null),
             oast::Exp::Bool(b) => (llast::Ty::I1, llast::Ginit::Int(b as i64)),
             oast::Exp::Int(i) => (llast::Ty::I64, llast::Ginit::Int(i)),
             oast::Exp::Str(s) => self.global_string(&name, s.to_string()),
@@ -157,7 +154,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             oast::Exp::ArrElems(ty, els) => {
                 let els: Vec<_> = els.into_iter().enumerate().map(|(i, e)| self.gexp(e.t, format!("{name}{i}"))).collect();
                 let array_len = els.len() as i64;
-                let elem_ty = self.tipe(ty);
+                let elem_ty = tipe(self.arena, ty);
 
                 let tmp_ty = array_maker(elem_ty.clone(), array_len);
                 let new_ty = array_maker(elem_ty.clone(), 0);
@@ -209,16 +206,16 @@ impl<'oat, 'll> Context<'oat, 'll> {
     }
 
     fn add_function_to_globals(&mut self, func: &oast::Fdecl<'oat>) {
-        let ret_ty = self.tipe(func.ret_ty.clone());
-        let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (self.tipe(t), n)).unzip();
+        let ret_ty = tipe(self.arena, func.ret_ty.clone());
+        let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (tipe(self.arena, t), n)).unzip();
 
         let ty_fun = llast::Ty::Fun(arg_tys, Box::new(ret_ty));
         assert!(self.globals.insert(func.name, (self.arena.intern(&func.name), ty_fun)).is_none());
     }
 
     fn function(&mut self, func: oast::Fdecl<'oat>) {
-        let ret_ty = self.tipe(func.ret_ty);
-        let (arg_tys, oat_names): (Vec<_>, Vec<_>) = func.args.into_iter().map(|(t, n)| (self.tipe(t), n)).unzip();
+        let ret_ty = tipe(self.arena, func.ret_ty);
+        let (arg_tys, oat_names): (Vec<_>, Vec<_>) = func.args.into_iter().map(|(t, n)| (tipe(self.arena, t), n)).unzip();
         let fun_ty = llast::FunTy {
             params: arg_tys,
             ret: ret_ty,
@@ -290,7 +287,6 @@ impl<'oat, 'll> Context<'oat, 'll> {
     fn stmt(&mut self, fun_ctx: &mut FunContext<'oat, 'll>, stmt: oast::Stmt<'oat>) -> bool {
         match stmt {
             oast::Stmt::Assn(lhs, rhs) => {
-                // todo: evaluation order?
                 let (rhs_op, ty) = self.exp(fun_ctx, rhs.t);
                 let (lhs_ptr_op, pointee_ty) = self.lhs(fun_ctx, lhs.t);
                 let rhs_op = self.typecast(fun_ctx, ty, rhs_op, pointee_ty.clone());
@@ -352,7 +348,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
                 fun_ctx.start_block(then_lbl);
 
-                let llty = self.tipe(ty);
+                let llty = tipe(self.arena, ty);
                 let alloca_uid = self.gensym(&name);
                 fun_ctx.cfg.entry.insns.push((alloca_uid, llast::Insn::Alloca(llty.clone())));
                 fun_ctx.locals.insert(name, (alloca_uid, llty.clone()));
@@ -447,7 +443,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
     fn exp(&mut self, fun_ctx: &mut FunContext<'oat, 'll>, exp: oast::Exp<'oat>) -> (llast::Operand<'ll>, llast::Ty<'ll>) {
         let (op, ty): (llast::Operand, llast::Ty) = match exp {
-            oast::Exp::Null(t) => (llast::Operand::Null, self.tipe(t)),
+            oast::Exp::Null(t) => (llast::Operand::Null, tipe(self.arena, t)),
             oast::Exp::Bool(b) => (llast::Operand::Const(b as i64), llast::Ty::I1),
             oast::Exp::Int(n) => (llast::Operand::Const(n), llast::Ty::I64),
             oast::Exp::Str(s) => {
@@ -462,7 +458,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 (llast::Operand::Id(uid), ty)
             }
             oast::Exp::ArrElems(aty, els) => {
-                let arr_el_ty = self.tipe(aty);
+                let arr_el_ty = tipe(self.arena, aty);
                 let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, arr_el_ty.clone(), llast::Operand::Const(els.len() as i64));
 
                 for (ix, el) in els.into_iter().enumerate() {
@@ -478,13 +474,13 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Exp::ArrLen(ty, len) => {
                 let (op, _) = self.exp(fun_ctx, len.t);
-                let ty = self.tipe(ty);
+                let ty = tipe(self.arena, ty);
                 let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, ty, op);
                 (array_op, array_ty)
             }
             oast::Exp::ArrInit(ty, len, name, init) => {
                 // todo: use phi nodes? might make code cleaner
-                let arr_el_ty = self.tipe(ty);
+                let arr_el_ty = tipe(self.arena, ty);
 
                 // allocate array
                 let (len_op, _) = self.exp(fun_ctx, len.t);

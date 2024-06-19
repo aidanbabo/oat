@@ -122,9 +122,8 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op<'static>)>, Lay
     }
 
     fn find_all_uids<'ll>(uids: &mut Vec<ll::Uid<'ll>>, b: &ll::Block<'ll>) {
-        for (uid, _) in &b.insns {
-            // todo: this is a hack! more sophisticated filtering please!
-            if !uid.starts_with('_') {
+        for (uid, insn) in &b.insns {
+            if !matches!(insn, ll::Insn::Store(..)) {
                 uids.push(*uid);
             }
         }
@@ -134,8 +133,6 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op<'static>)>, Lay
     for (_, b) in &fdecl.cfg.blocks {
         find_all_uids(&mut body_uids, b);
     }
-    // why?
-    body_uids.reverse();
 
     let local_offset = std::cmp::min(7, fdecl.params.len() + 1) as i64;
     let ind3 = |i: i64| Op::Ind3(Imm::Word(-8 * (i + local_offset)), Reg::Rbp);
@@ -349,7 +346,6 @@ fn translate_op<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, op: ll::Operand<'l
     match op {
         ll::Operand::Null => Op::Imm(Imm::Word(0)),
         ll::Operand::Const(c) => Op::Imm(Imm::Word(c)),
-        // todo: mangle?
         ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(fctx.arena.intern_string(platform::mangle(&gid))), Reg::Rip),
         ll::Operand::Id(uid) => fctx.layout[&uid],
     }
