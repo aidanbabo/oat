@@ -7,8 +7,9 @@ use internment::{Arena, ArenaIntern};
 
 lalrpop_mod!(parser, "/llvm/parser.rs"); // synthesized by LALRPOP
 pub mod ast;
-pub(crate) mod parser_utils;
+pub mod dataflow;
 mod interp;
+pub(crate) mod parser_utils;
 mod print;
 
 pub use interp::ExecError;

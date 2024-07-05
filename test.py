@@ -137,7 +137,7 @@ def eval_test(test: Test, exitcode: int, prints: bytes) -> TestResult:
 
 def run_test(test: Test) -> TestResult:
     # todo: use tabs and longest test length
-    eprint(f"running test at {test.path}...", end='')
+    eprint(f"\t{test.path}...", end='')
     if test.skip and not test.passed_by_name:
         eprint(f'SKIPPED ({test.skip})')
         return TestResult.SKIPPED
@@ -192,7 +192,12 @@ def filter_tests(tests: List[Test]) -> List[Test]:
 
 def run_tests(tests: List[Test]):
     passed = failed = skipped = 0
+    prev_category = None
     for i, t in enumerate(tests):
+        if t.category != prev_category:
+            prev_category = t.category
+            print(f"Running {t.category} tests:")
+
         tr = run_test(t)
         if tr == TestResult.PASSED:
             passed += 1
@@ -252,7 +257,7 @@ def main():
         return
 
     tests = filter_tests(tests)
-    tests.sort(key=lambda t: t.path)
+    tests.sort(key=lambda t: (t.category, t.path))
     # todo: group tests by category
     if args.list:
         list_tests(tests)
