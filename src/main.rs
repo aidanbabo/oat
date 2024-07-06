@@ -1,13 +1,9 @@
 use clap::Parser;
 use internment::Arena;
-use oat::llvm::dataflow::liveness::Node;
 
 use std::path::PathBuf;
 use std::fs;
 use std::process;
-
-// todo: remove
-use oat::llvm::dataflow::DFAGraph;
 
 #[derive(Parser)]
 struct Args {
@@ -86,7 +82,11 @@ fn main() {
     }
 
     for (_name, fdecl) in &ll_prog.fdecls {
-        let _g = oat::llvm::dataflow::solve(oat::llvm::dataflow::liveness::Graph::from_fdecl(fdecl));
+        use oat::llvm::dataflow;
+        let graph1 = dataflow::Graph::<'_, dataflow::liveness::Fact>::from_fdecl(fdecl);
+        let g1 = dataflow::solve(graph1);
+        let mut f1 = g1.facts.into_iter().collect::<Vec<_>>();
+        f1.sort_by_key(|x| x.0);
     }
 
     /*
