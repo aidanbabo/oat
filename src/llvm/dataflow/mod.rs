@@ -14,6 +14,7 @@ use std::fmt;
 
 // todo: priv the whole thing
 pub mod liveness;
+pub mod alias;
 
 pub trait DataflowFact<'a> : cmp::PartialEq + fmt::Debug + Sized {
     // for dataflow
@@ -87,17 +88,17 @@ pub enum Node {
 }
 
 #[derive(Debug)]
-pub struct Graph<'a, F> {
-    fdecl: &'a ast::Fdecl<'a>,
+pub struct Graph<'ast, 'fdecl, F> {
+    fdecl: &'fdecl ast::Fdecl<'ast>,
     /// map bbix -> [bbix], has a space at the end for the boundary block and at the start for the
     /// entry block
     pub block_preds: Vec<Vec<usize>>,
-    label_to_bbix: HashMap<ast::Lbl<'a>, usize>,
+    label_to_bbix: HashMap<ast::Lbl<'ast>, usize>,
     pub facts: HashMap<Node, F>,
 }
 
-impl<'a, F: DataflowFact<'a> + Default + Clone> Graph<'a, F> {
-    pub fn from_fdecl(fdecl: &'a ast::Fdecl<'a>) -> Self {
+impl<'a, 'fdecl, F: DataflowFact<'a> + Default + Clone> Graph<'a, 'fdecl, F> {
+    pub fn from_fdecl(fdecl: &'fdecl ast::Fdecl<'a>) -> Self {
         let mut g = Self {
             fdecl,
             label_to_bbix: fdecl.cfg.blocks.iter().enumerate().map(|(i, (lbl, _blk))| (*lbl, i + 1)).collect(),
@@ -138,7 +139,7 @@ impl<'a, F: DataflowFact<'a> + Default + Clone> Graph<'a, F> {
     }
 }
 
-impl<'a, F> Graph<'a, F> {
+impl<'a, F> Graph<'a, '_, F> {
     fn nodes_before(&self, n: Node) -> Vec<Node> {
         match n {
             Node::Insn { bbix, ix } => {
@@ -229,7 +230,7 @@ impl<'a, F> Graph<'a, F> {
     }
 }
 
-impl<'a, F: DataflowFact<'a> + Clone> DFAGraph<'a> for Graph<'a, F> {
+impl<'a, F: DataflowFact<'a> + Clone> DFAGraph<'a> for Graph<'a, '_, F> {
     type Fact = F;
 
     type Node = Node;

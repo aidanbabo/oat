@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 // todo: bitvector
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Fact<'a>(HashSet<ast::Uid<'a>>);
+pub struct Fact<'a>(pub HashSet<ast::Uid<'a>>);
 
 fn fact_from_def_use<'a>(old_in: Fact<'a>, def: Option<ast::Uid<'a>>, uze: &[ast::Operand<'a>]) -> Fact<'a> {
         let mut new_in = old_in.0;

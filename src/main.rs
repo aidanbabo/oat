@@ -1,6 +1,7 @@
 use clap::Parser;
 use internment::Arena;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::fs;
 use std::process;
@@ -34,7 +35,7 @@ fn main() {
 
     let ll_arena = Arena::new();
 
-    let ll_prog = if ext == "oat" {
+    let mut ll_prog = if ext == "oat" {
         let oat_arena = Arena::new();
 
         let s = fs::read_to_string(&args.path).unwrap();
@@ -77,16 +78,68 @@ fn main() {
         process::exit(1);
     };
 
-    if args.print_ll {
-        oat::llvm::print(&ll_prog);
+    // todo: good code lol
+    // todo: multiple rounds of dce
+    for (_name, fdecl) in &mut ll_prog.fdecls {
+        use oat::llvm::dataflow;
+        let liveness = dataflow::solve(dataflow::Graph::<'_, '_, dataflow::liveness::Fact>::from_fdecl(fdecl)).facts;
+        let mut f = liveness.iter().collect::<Vec<_>>();
+        f.sort_by_key(|x| x.0);
+        println!("liveness");
+        for (n, f) in f {
+            println!("{n:?}: {:?}", f.0);
+        }
+
+        let graph1 = dataflow::Graph::<'_, '_, dataflow::alias::Fact>::from_fdecl(fdecl);
+        let alias = dataflow::solve(graph1).facts;
+        let mut f = alias.iter().collect::<Vec<_>>();
+        f.sort_by_key(|x| x.0);
+        println!("alias");
+        for (n, f) in f {
+            println!("{n:?}: {:?}", f.0);
+        }
+
+        fn dce_block(b: &mut oat::llvm::ast::Block<'_>, bbix: usize, liveness: &HashMap<dataflow::Node, dataflow::liveness::Fact>, alias: &HashMap<dataflow::Node, dataflow::alias::Fact>) {
+            let len = b.insns.len();
+            let mut ix = len;
+            // lmao lets reverse it because it works better that way! this is so silly!
+            b.insns.reverse();
+            b.insns.retain(|(uid, insn)| {
+                // todo: fix this garbage at a better abstraction level
+                // no forwards/backwards
+                // no manual node-ding: make an iterator or smth
+                let forwards_node_ix = dataflow::Node::Insn { bbix, ix: ix - 1};
+                let backwards_node_ix = if ix == len {
+                    dataflow::Node::Term { bbix }
+                } else {
+                    dataflow::Node::Insn { bbix, ix }
+                };
+                let keep = match insn {
+                    oat::llvm::ast::Insn::Call(_, _, _) | oat::llvm::ast::Insn::Store(_, _, oat::llvm::ast::Operand::Gid(_)) => true,
+                    oat::llvm::ast::Insn::Store(_, _, oat::llvm::ast::Operand::Id(id)) => {
+                        let lives = liveness[&backwards_node_ix].0.contains(id);
+                        let unique = alias[&forwards_node_ix].0.get(id).copied().unwrap_or(dataflow::alias::Alias::Undef) != dataflow::alias::Alias::May;
+                        lives || !unique
+                    }
+                    _ => {
+                        liveness[&backwards_node_ix].0.contains(uid)
+                    }
+                };
+                ix -= 1;
+                keep
+            });
+            b.insns.reverse();
+        }
+
+        // todo: this pattern happens too often, make an iterator or smth
+        dce_block(&mut fdecl.cfg.entry, 0, &liveness, &alias);
+        for (ix, (_lbl, b)) in fdecl.cfg.blocks.iter_mut().enumerate() {
+            dce_block(b, ix + 1, &liveness, &alias);
+        }
     }
 
-    for (_name, fdecl) in &ll_prog.fdecls {
-        use oat::llvm::dataflow;
-        let graph1 = dataflow::Graph::<'_, dataflow::liveness::Fact>::from_fdecl(fdecl);
-        let g1 = dataflow::solve(graph1);
-        let mut f1 = g1.facts.into_iter().collect::<Vec<_>>();
-        f1.sort_by_key(|x| x.0);
+    if args.print_ll {
+        oat::llvm::print(&ll_prog);
     }
 
     /*

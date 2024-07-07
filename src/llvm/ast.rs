@@ -61,8 +61,9 @@ pub enum Cnd {
 pub enum Insn<'a> {
     Binop(Bop, Ty<'a>, Operand<'a>, Operand<'a>),
     Alloca(Ty<'a>),
+    /// tye type of the loaded value and then the operand to load from
     Load(Ty<'a>, Operand<'a>),
-    /// the type of the stored variable, the elem to store, and then the location
+    /// the type of the stored value, the value operand to store, and then the location to store to
     Store(Ty<'a>, Operand<'a>, Operand<'a>),
     Icmp(Cnd, Ty<'a>, Operand<'a>, Operand<'a>),
     Call(Ty<'a>, Operand<'a>, Vec<(Ty<'a>, Operand<'a>)>),
