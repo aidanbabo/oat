@@ -15,8 +15,9 @@ use std::fmt;
 // todo: priv the whole thing
 pub mod liveness;
 pub mod alias;
+pub mod dce;
 
-pub trait DataflowFact<'a> : cmp::PartialEq + fmt::Debug + Sized {
+trait DataflowFact<'a> : cmp::PartialEq + fmt::Debug + Sized {
     // for dataflow
     fn combine(facts: &[Self]) -> Self;
 
@@ -29,7 +30,7 @@ pub trait DataflowFact<'a> : cmp::PartialEq + fmt::Debug + Sized {
     fn terminator_flow(self, term: &ast::Terminator<'a>) -> Self;
 }
 
-pub trait DFAGraph<'a> {
+trait DFAGraph<'a> {
     type Fact : DataflowFact<'a>;
     type Node;
 
@@ -49,7 +50,7 @@ pub trait DFAGraph<'a> {
     fn add_fact(&mut self, n: &Self::Node, f: Self::Fact);
 }
 
-pub fn solve<'a, T>(mut graph: T) -> T
+fn solve<'a, T>(mut graph: T) -> T
     where T: DFAGraph<'a>
 {
     // todo: remove duplicates in worklist
@@ -68,8 +69,24 @@ pub fn solve<'a, T>(mut graph: T) -> T
     graph
 }
 
+// these may be the worst names ever
+pub struct Analysis<'a, T> {
+    map: HashMap<ast::Uid<'a>, usize>,
+    vec: Vec<T>,
+}
+
+impl<'a, T> Analysis<'a, T> {
+    pub fn in_at(&self, uid: ast::Uid<'a>) -> &T {
+        &self.vec[self.map[&uid] - 1]
+    }
+
+    pub fn out_at(&self, uid: ast::Uid<'a>) -> &T {
+        &self.vec[self.map[&uid]]
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Node {
+enum Node {
     /// regular instruction
     Insn {
         /// index of basic block
@@ -88,15 +105,16 @@ pub enum Node {
 }
 
 #[derive(Debug)]
-pub struct Graph<'ast, 'fdecl, F> {
+struct Graph<'ast, 'fdecl, F> {
     fdecl: &'fdecl ast::Fdecl<'ast>,
     /// map bbix -> [bbix], has a space at the end for the boundary block and at the start for the
     /// entry block
-    pub block_preds: Vec<Vec<usize>>,
+    block_preds: Vec<Vec<usize>>,
     label_to_bbix: HashMap<ast::Lbl<'ast>, usize>,
-    pub facts: HashMap<Node, F>,
+    facts: HashMap<Node, F>,
 }
 
+// todo: clean up + Clone and + Default to be on the trait if needed
 impl<'a, 'fdecl, F: DataflowFact<'a> + Default + Clone> Graph<'a, 'fdecl, F> {
     pub fn from_fdecl(fdecl: &'fdecl ast::Fdecl<'a>) -> Self {
         let mut g = Self {
@@ -226,6 +244,45 @@ impl<'a, F> Graph<'a, '_, F> {
             }
             // the boundary node is always at the end of the cfg
             Node::Boundary => vec![],
+        }
+    }
+}
+
+impl<'a, F: DataflowFact<'a>> Graph<'a, '_, F> {
+    fn into_analysis(mut self) -> Analysis<'a, F> {
+        let mut blocks = vec![&self.fdecl.cfg.entry];
+        blocks.extend(self.fdecl.cfg.blocks.iter().map(|(_lbl, b)| b));
+
+        let mut nodes = Vec::new();
+        let mut uids = Vec::new();
+        
+        if F::forward() {
+            nodes.push(Node::Boundary);
+        }
+
+        for (bbix, block) in blocks.into_iter().enumerate() {
+            for (ix, (uid, _insn)) in block.insns.iter().enumerate() {
+                nodes.push(Node::Insn { bbix, ix });
+                uids.push(*uid);
+            }
+            nodes.push(Node::Term { bbix });
+            uids.push(block.term.0);
+        }
+
+        if !F::forward() {
+            nodes.push(Node::Boundary);
+        }
+
+        Analysis {
+            map: uids
+                .into_iter()
+                .enumerate()
+                .map(|(ix, uid)| (uid, ix + 1))
+                .collect(),
+            vec: nodes
+                .into_iter()
+                .map(|node| self.facts.remove(&node).unwrap())
+                .collect(),
         }
     }
 }

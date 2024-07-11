@@ -1,6 +1,12 @@
-use crate::llvm::ast;
-use crate::llvm::dataflow::DataflowFact;
 use std::collections::HashSet;
+
+use crate::llvm::ast;
+use crate::llvm::dataflow::{DataflowFact, Graph, Analysis, solve};
+
+pub fn run<'a>(fdecl: &ast::Fdecl<'a>) -> Analysis<'a, Fact<'a>> {
+    let graph = Graph::<'_, '_, Fact>::from_fdecl(fdecl);
+    solve(graph).into_analysis()
+}
 
 // todo: bitvector
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -1,7 +1,12 @@
 use std::collections::HashMap;
 
 use crate::llvm::ast;
-use crate::llvm::dataflow::DataflowFact;
+use crate::llvm::dataflow::{DataflowFact, Graph, Analysis, solve};
+
+pub fn run<'a>(fdecl: &ast::Fdecl<'a>) -> Analysis<'a, Fact<'a>> {
+    let graph = Graph::<'_, '_, Fact>::from_fdecl(fdecl);
+    solve(graph).into_analysis()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Alias {
