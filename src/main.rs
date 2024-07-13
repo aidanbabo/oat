@@ -78,9 +78,11 @@ fn main() {
     };
 
     // todo: optimizations
-
+    
+    let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
     let ll_prog = oat::llvm::dataflow::dce::run(ll_prog);
     // todo: remove and do dce until fixed point internally
+    let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
     let ll_prog = oat::llvm::dataflow::dce::run(ll_prog);
 
     if args.print_ll {

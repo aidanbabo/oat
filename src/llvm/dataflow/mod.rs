@@ -13,9 +13,10 @@ use std::cmp;
 use std::fmt;
 
 // todo: priv the whole thing
-pub mod liveness;
 pub mod alias;
+pub mod constprop;
 pub mod dce;
+pub mod liveness;
 
 trait DataflowFact<'a> : cmp::PartialEq + fmt::Debug + Sized {
     // for dataflow
@@ -37,8 +38,9 @@ trait DFAGraph<'a> {
     /// Gets the fact flowing out of a node
     fn out(&self, n: &Self::Node) -> Self::Fact;
 
-    /// Gets the predecessors or successors of a node
+    /// Gets the predecessors of a node
     fn preds(&self, n: &Self::Node) -> Vec<Self::Node>;
+    /// Gets the successors of a node
     fn succs(&self, n: &Self::Node) -> Vec<Self::Node>;
     /// Gets all nodes
     fn nodes(&self) -> Vec<Self::Node>;
@@ -82,6 +84,15 @@ impl<'a, T> Analysis<'a, T> {
 
     pub fn out_at(&self, uid: ast::Uid<'a>) -> &T {
         &self.vec[self.map[&uid]]
+    }
+}
+
+impl<'a, T: fmt::Debug> fmt::Debug for Analysis<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut vals: Vec<_> = self.map.iter().collect();
+        vals.sort_by_key(|(_uid, ix)| *ix);
+        let vals: Vec<_> = vals.into_iter().map(|(uid, ix)| (uid, &self.vec[*ix])).collect();
+        write!(f, "{:?}", vals)
     }
 }
 
