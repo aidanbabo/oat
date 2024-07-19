@@ -2,18 +2,22 @@ use clap::Parser;
 use internment::Arena;
 
 use std::path::PathBuf;
-use std::fs;
+use std::fs::{self, File};
+use std::io::BufWriter;
 use std::process;
+use std::time::{Instant, Duration};
 
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
     // todo: support multiple files, idk how that will interact with passing args with --execute-asm/x86
-    args: Vec<String>,
+    program_args: Vec<String>,
     #[arg(long)]
     print_oat: bool,
     #[arg(long)]
     print_ll: bool,
+    #[arg(long)]
+    print_preopt_ll: bool,
     #[arg(long)]
     print_asm: bool,
     #[arg(long)]
@@ -27,6 +31,41 @@ struct Args {
     // todo: add cross compilation support?
 }
 
+#[derive(Default)]
+struct Timings {
+    parsing: Option<Duration>,
+    typechecking: Option<Duration>,
+    to_llvm: Option<Duration>,
+    optimizations: Option<Duration>,
+    interpreting: Option<Duration>,
+    to_assembly: Option<Duration>,
+    linking: Option<Duration>,
+}
+
+fn print_timings(timings: &Timings) {
+    if let Some(t) = timings.parsing {
+        println!("Parsing: {t:?}");
+    }
+    if let Some(t) = timings.typechecking {
+        println!("Typechecking: {t:?}");
+    }
+    if let Some(t) = timings.to_llvm {
+        println!("Lowering to LLVM: {:?}", t);
+    }
+    if let Some(t) = timings.interpreting {
+        println!("Interpreting: {t:?}");
+    }
+    if let Some(t) = timings.optimizations {
+        println!("Optimizing: {t:?}");
+    }
+    if let Some(t) = timings.to_assembly {
+        println!("To Assembly: {t:?}");
+    }
+    if let Some(t) = timings.linking {
+        println!("Assembling and Linking: {t:?}");
+    }
+}
+
 fn main() {
     let args = Args::parse();
     let Some(ext) = args.path.extension().and_then(|s| s.to_str()) else {
@@ -34,12 +73,14 @@ fn main() {
         process::exit(1);
     };
 
+    let mut timings: Timings = Default::default();
+
     let ll_arena = Arena::new();
 
     let ll_prog = if ext == "oat" {
         let oat_arena = Arena::new();
 
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let s = fs::read_to_string(&args.path).unwrap();
         let prog = match oat::oat::parse(&s, &oat_arena) {
             Ok(p) => p,
@@ -48,9 +89,7 @@ fn main() {
                 process::exit(1);
             }
         };
-        if args.timings {
-            println!("Parsing: {:?}", start.elapsed());
-        }
+        timings.parsing = Some(start.elapsed());
 
         if args.print_oat {
             oat::oat::print(&prog);
@@ -64,9 +103,7 @@ fn main() {
                 process::exit(1);
             }
         };
-        if args.timings {
-            println!("Typechecking: {:?}", start.elapsed());
-        }
+        timings.typechecking = Some(start.elapsed());
 
         if args.check {
             return;
@@ -74,9 +111,7 @@ fn main() {
 
         let start = std::time::Instant::now();
         let ll = oat::oat::to_llvm(prog, tctx, &ll_arena, &oat_arena);
-        if args.timings {
-            println!("Lowering to LLVM: {:?}", start.elapsed());
-        }
+        timings.to_llvm = Some(start.elapsed());
         ll
     } else if ext == "ll" {
         let start = std::time::Instant::now();
@@ -88,9 +123,7 @@ fn main() {
                 process::exit(1);
             }
         };
-        if args.timings {
-            println!("Parsing: {:?}", start.elapsed());
-        }
+        timings.parsing = Some(start.elapsed());
         ll
     } else {
         eprintln!("Only supporting oat or ll files");
@@ -98,6 +131,9 @@ fn main() {
     };
 
     // todo: optimizations
+    if args.print_preopt_ll {
+        oat::llvm::print(&ll_prog);
+    }
     
     let start = std::time::Instant::now();
     let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
@@ -105,9 +141,7 @@ fn main() {
     // todo: remove and do dce until fixed point internally
     let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
     let ll_prog = oat::llvm::dataflow::dce::run(ll_prog);
-    if args.timings {
-        println!("Optimizations: {:?}", start.elapsed());
-    }
+    timings.optimizations = Some(start.elapsed());
 
     if args.print_ll {
         oat::llvm::print(&ll_prog);
@@ -115,13 +149,14 @@ fn main() {
 
     if args.interpret_ll {
         let start = std::time::Instant::now();
-        let prog_args: Vec<_> = args.args.iter().map(|s| &**s).collect();
+        let prog_args: Vec<_> = args.program_args.iter().map(|s| &**s).collect();
         let entry = ll_arena.intern("main");
         let r = oat::llvm::interp(&ll_prog, &prog_args, entry).unwrap();
-        if args.timings {
-            println!("Interpreting: {:?}", start.elapsed());
-        }
+        timings.interpreting = Some(start.elapsed());
         println!("Interpreter Result: {r}");
+        if args.timings {
+            print_timings(&timings);
+        }
         return;
     }
 
@@ -130,24 +165,18 @@ fn main() {
     let start = std::time::Instant::now();
     let clang_input_file_path = if args.clang {
         let base_name = args.path.file_stem().unwrap();
-        let mut ll_path = PathBuf::from("output").join(base_name);
-        ll_path.set_extension("ll");
-        let mut asm_path = PathBuf::from("output").join(base_name);
-        asm_path.set_extension("S");
+        let ll_path = PathBuf::from("output").join(base_name).with_extension("ll");
+        let asm_path = PathBuf::from("output").join(base_name).with_extension("S");
 
-        let ll_file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&ll_path)
-            .unwrap();
+        let ll_file = File::create(&ll_path).unwrap();
+        let ll_file = BufWriter::new(ll_file);
         oat::llvm::write(ll_file, &ll_prog).unwrap();
         let cmd = process::Command::new("clang")
             .arg(&ll_path)
             .arg("-S")
             // todo: add triple
             .arg("-Wno-override-module")
-            .args(&["-o", &asm_path.to_string_lossy()])
+            .args(["-o", &asm_path.to_string_lossy()])
             .spawn()
             .unwrap()
             .wait()
@@ -166,20 +195,13 @@ fn main() {
         }
 
         let base_name = args.path.file_stem().unwrap();
-        let mut path = PathBuf::from("output").join(base_name);
-        path.set_extension("S");
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .unwrap();
+        let path = PathBuf::from("output").join(base_name).with_extension("S");
+        let file = File::create(&path).unwrap();
+        let file = BufWriter::new(file);
         oat::backend::x64::write(file, &asm_prog).unwrap();
         path
     };
-    if args.timings {
-        println!("Converted to assembly: {:?}", start.elapsed());
-    }
+    timings.to_assembly = Some(start.elapsed());
 
     let start = std::time::Instant::now();
     let mut cmd = process::Command::new("clang");
@@ -199,8 +221,9 @@ fn main() {
     if !run.success() {
         std::process::exit(1);
     }
+    timings.linking = Some(start.elapsed());
+
     if args.timings {
-        println!("Assembled and linked: {:?}", start.elapsed());
+        print_timings(&timings);
     }
 }
-
