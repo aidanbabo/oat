@@ -1,7 +1,7 @@
 use clap::Parser;
 use internment::Arena;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::process;
@@ -28,6 +28,8 @@ struct Args {
     check: bool,
     #[arg(long)]
     timings: bool,
+    #[arg(long)]
+    recompile_runtime: bool,
     // todo: add cross compilation support?
 }
 
@@ -95,7 +97,7 @@ fn main() {
             oat::oat::print(&prog);
         }
 
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let tctx = match oat::oat::typecheck(&prog, &oat_arena) {
             Ok(tctx) => tctx,
             Err(oat::oat::TypeError(msg)) => {
@@ -109,12 +111,12 @@ fn main() {
             return;
         }
 
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let ll = oat::oat::to_llvm(prog, tctx, &ll_arena, &oat_arena);
         timings.to_llvm = Some(start.elapsed());
         ll
     } else if ext == "ll" {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let s = fs::read_to_string(&args.path).unwrap();
         let ll = match oat::llvm::parse(&s, &ll_arena) {
             Ok(p) => p,
@@ -135,7 +137,7 @@ fn main() {
         oat::llvm::print(&ll_prog);
     }
     
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
     let ll_prog = oat::llvm::dataflow::dce::run(ll_prog);
     // todo: remove and do dce until fixed point internally
@@ -148,7 +150,7 @@ fn main() {
     }
 
     if args.interpret_ll {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let prog_args: Vec<_> = args.program_args.iter().map(|s| &**s).collect();
         let entry = ll_arena.intern("main");
         let r = oat::llvm::interp(&ll_prog, &prog_args, entry).unwrap();
@@ -162,7 +164,7 @@ fn main() {
 
     let _ = fs::create_dir("output");
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let clang_input_file_path = if args.clang {
         let base_name = args.path.file_stem().unwrap();
         let ll_path = PathBuf::from("output").join(base_name).with_extension("ll");
@@ -203,17 +205,30 @@ fn main() {
     };
     timings.to_assembly = Some(start.elapsed());
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let mut cmd = process::Command::new("clang");
     cmd.arg(&clang_input_file_path);
     if ext == "oat" {
-        cmd.arg("runtime.c");
+        let precompiled_runtime = Path::new("runtime.o");
+        if args.recompile_runtime || !precompiled_runtime.exists() {
+            process::Command::new("clang")
+                .arg("runtime.c")
+                .arg("-c")
+                .arg("-mstackrealign")
+                .args(["-o", &precompiled_runtime.to_string_lossy()])
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
+        cmd.arg(precompiled_runtime);
     } else if ext == "ll" {
         // todo: runtime support for ll files (tests)
     }
     let run = cmd
         .arg("-mstackrealign") // automatically realigns stack for "backward compatibility" 
                                // i.e. allows us to be lazier
+                               // requires us to compile the runtime with the same option
         .spawn()
         .unwrap()
         .wait()

@@ -4,3 +4,4 @@
 # oat generated files
 /output
 a.out
+*.o
