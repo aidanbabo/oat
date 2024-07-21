@@ -238,7 +238,13 @@ def main():
         exit(1)
 
     if args.suite == 'all':
+        files = hw4_files() + hw5_files() + custom_files() + ll_files()
+        tests = parse_tests(files)
+    elif args.suite == 'oat':
         files = hw4_files() + hw5_files() + custom_files()
+        tests = parse_tests(files)
+    elif args.suite == 'custom':
+        files = custom_files()
         tests = parse_tests(files)
     elif args.suite == 'hw4':
         files = hw4_files()
@@ -271,7 +277,7 @@ if __name__ == '__main__':
     custom_categories = ['custom']
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('suite', default='all', nargs='?')
+    parser.add_argument('suite', default='all', nargs='?', choices=['all','oat', 'custom', 'hw4', 'hw5', 'llvm'])
     parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories + hw5_test_categories + custom_categories, default='all')
     parser.add_argument('-l', '--list', action='store_true')
     parser.add_argument('--early', action='store_true')

@@ -1,6 +1,6 @@
 ;;category io
 ;;prints 38
-;;skip ll_callback is unimplemented
+;;interp_skip ll_callback is unimplemented
 %fty = type i64 (i64, i64)
 
 declare i64 @ll_callback(%fty*)

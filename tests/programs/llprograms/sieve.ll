@@ -1,6 +1,6 @@
 ;;category uncategorized
 ;;exitcode 1
-;;skip ll_malloc is unimplemented
+;;interp_skip ll_malloc is unimplemented
 declare i64* @ll_malloc(i64, i64)
 
 define i64 @main(i64 %argc, i8** %argv) {

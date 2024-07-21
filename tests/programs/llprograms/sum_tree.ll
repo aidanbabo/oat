@@ -1,6 +1,6 @@
 ;;category uncategorized
 ;;exitcode 116
-;;skip UndefPtrDeref in reference interpreter
+;;interp_skip UndefPtrDeref in reference interpreter
 %struct.Node = type { %struct.Node*, %struct.Node*, i64 }
 
 @test1 = global %struct.Node { %struct.Node* null, %struct.Node* null, i64 100 }

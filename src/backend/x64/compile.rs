@@ -240,7 +240,8 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             /// which is fine ig
             fn size_ty<'ll>(fctx: &FunctionContext<'ll, '_>, ty: &ll::Ty<'ll>) -> i64 {
                 match ty {
-                    ll::Ty::Void | ll::Ty::I8 | ll::Ty::Fun(..) => panic!("undefined size, what the hell"),
+                    ll::Ty::Void | ll::Ty::Fun(..) => panic!("undefined size, what the hell"),
+                    ll::Ty::I8 => 1, // this should only ever happen in compiling ll files
                     ll::Ty::I1 | ll::Ty::I64 | ll::Ty::Ptr(..) => 8,
                     ll::Ty::Struct(ts) => ts.iter().map(|t| size_ty(fctx, t)).sum(),
                     ll::Ty::Array(n, t) => n * size_ty(fctx, t),

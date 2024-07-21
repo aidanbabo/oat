@@ -542,7 +542,7 @@ impl<'prog> Interpreter<'prog> {
                 }))
 
             }
-            (ast::Ty::I64, "ll_ltoa", [SVal::Int(i), SVal::Ptr(..)]) => {
+            (ast::Ty::I64, "ll_ltoa", [SVal::Int(i)]) => {
                 let mid = self.next_id();
                 let mv = MVal(vec![MTree::Str(i.to_string())]);
                 self.config.heap.insert(mid, mv);

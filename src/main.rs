@@ -4,7 +4,7 @@ use internment::Arena;
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use std::io::BufWriter;
-use std::process;
+use std::process::{self, Command};
 use std::time::{Instant, Duration};
 
 #[derive(Parser)]
@@ -65,6 +65,21 @@ fn print_timings(timings: &Timings) {
     }
     if let Some(t) = timings.linking {
         println!("Assembling and Linking: {t:?}");
+    }
+}
+
+fn precompile_runtime(args: &Args, path: &Path) {
+    let precompiled_runtime = path;
+    if args.recompile_runtime || !precompiled_runtime.exists() {
+        Command::new("clang")
+            .arg(precompiled_runtime.with_extension("c"))
+            .arg("-c")
+            .arg("-mstackrealign")
+            .args(["-o", &precompiled_runtime.to_string_lossy()])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
     }
 }
 
@@ -167,13 +182,13 @@ fn main() {
     let start = Instant::now();
     let clang_input_file_path = if args.clang {
         let base_name = args.path.file_stem().unwrap();
-        let ll_path = PathBuf::from("output").join(base_name).with_extension("ll");
-        let asm_path = PathBuf::from("output").join(base_name).with_extension("S");
+        let base_path = PathBuf::from("output").join(base_name); 
+        let ll_path = base_path.with_extension("ll");
+        let asm_path = base_path.with_extension("S");
 
-        let ll_file = File::create(&ll_path).unwrap();
-        let ll_file = BufWriter::new(ll_file);
+        let ll_file = BufWriter::new(File::create(&ll_path).unwrap());
         oat::llvm::write(ll_file, &ll_prog).unwrap();
-        let cmd = process::Command::new("clang")
+        let cmd = Command::new("clang")
             .arg(&ll_path)
             .arg("-S")
             // todo: add triple
@@ -184,7 +199,7 @@ fn main() {
             .wait()
             .unwrap();
         if !cmd.success() {
-            std::process::exit(1);
+            process::exit(1);
         }
 
         asm_path
@@ -198,32 +213,23 @@ fn main() {
 
         let base_name = args.path.file_stem().unwrap();
         let path = PathBuf::from("output").join(base_name).with_extension("S");
-        let file = File::create(&path).unwrap();
-        let file = BufWriter::new(file);
+        let file = BufWriter::new(File::create(&path).unwrap());
         oat::backend::x64::write(file, &asm_prog).unwrap();
         path
     };
     timings.to_assembly = Some(start.elapsed());
 
     let start = Instant::now();
-    let mut cmd = process::Command::new("clang");
+    let mut cmd = Command::new("clang");
     cmd.arg(&clang_input_file_path);
     if ext == "oat" {
-        let precompiled_runtime = Path::new("runtime.o");
-        if args.recompile_runtime || !precompiled_runtime.exists() {
-            process::Command::new("clang")
-                .arg("runtime.c")
-                .arg("-c")
-                .arg("-mstackrealign")
-                .args(["-o", &precompiled_runtime.to_string_lossy()])
-                .spawn()
-                .unwrap()
-                .wait()
-                .unwrap();
-        }
-        cmd.arg(precompiled_runtime);
+        let path = Path::new("runtime/oat_runtime.o");
+        precompile_runtime(&args, path);
+        cmd.arg(path);
     } else if ext == "ll" {
-        // todo: runtime support for ll files (tests)
+        let path = Path::new("runtime/ll_runtime.o");
+        precompile_runtime(&args, path);
+        cmd.arg(path);
     }
     let run = cmd
         .arg("-mstackrealign") // automatically realigns stack for "backward compatibility" 
@@ -234,7 +240,7 @@ fn main() {
         .wait()
         .unwrap();
     if !run.success() {
-        std::process::exit(1);
+        process::exit(1);
     }
     timings.linking = Some(start.elapsed());
 

@@ -1,6 +1,6 @@
 ;;category large
 ;;exitcode 3
-;; skip UndefPtrDeref in reference interpreter
+;;interp_skip UndefPtrDeref in reference interpreter
 %node = type { i64, %node* }
 
 @hd = global %node { i64 1, %node* @md }
