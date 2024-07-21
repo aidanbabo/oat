@@ -8,7 +8,7 @@
 // once to speed things up, this is an optimization that we most definitely want, but we also just
 // want any working code to start
 use crate::llvm::ast;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::cmp;
 use std::fmt;
 
@@ -33,7 +33,7 @@ trait DataflowFact<'a> : cmp::PartialEq + fmt::Debug + Sized {
 
 trait DFAGraph<'a> {
     type Fact : DataflowFact<'a>;
-    type Node;
+    type Node : Ord;
 
     /// Gets the fact flowing out of a node
     fn out(&self, n: &Self::Node) -> Self::Fact;
@@ -55,9 +55,9 @@ trait DFAGraph<'a> {
 fn solve<'a, T>(mut graph: T) -> T
     where T: DFAGraph<'a>
 {
-    // todo: remove duplicates in worklist
-    let mut worklist = graph.nodes();
-    while let Some(node) = worklist.pop() {
+    // todo: which end to remove from? this end gets some small empirical results
+    let mut worklist = BTreeSet::from_iter(graph.nodes());
+    while let Some(node) = if T::Fact::forward() { worklist.pop_first() } else { worklist.pop_last() } {
         let old_out = graph.out(&node);
         let old_facts: Vec<_> = graph.preds(&node).into_iter().map(|n| graph.out(&n)).collect();
         let inn = DataflowFact::combine(&old_facts);
@@ -96,7 +96,7 @@ impl<'a, T: fmt::Debug> fmt::Debug for Analysis<'a, T> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Node {
     /// regular instruction
     Insn {
@@ -110,9 +110,43 @@ enum Node {
         /// index of basic block
         bbix: usize,
     },
+    // todo: make this two seperate ones? this would help the ordering a bit which seems to
+    // greatly increase the speed of optimizations (at least while we do them per-instruction)
     /// special boundary node representing the edge entering at the top for backward analysis and
     /// an edge at the bottom for forward analysis
     Boundary,
+}
+
+impl PartialOrd for Node {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// you can't meaningfully order these because of loops, but a best effort goes a long way for
+// improving the dfa solving
+impl Ord for Node {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        // todo: this is a hack lol!
+        fn to_pair(n: Node) -> (usize, usize) {
+            match n {
+                Node::Insn { bbix, ix } => (bbix, ix),
+                Node::Term { bbix } => (bbix, usize::MAX),
+                Node::Boundary => (usize::MAX, usize::MAX),
+            }
+        }
+        to_pair(*self).cmp(&to_pair(*other))
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn node_ordering() {
+    assert!(Node::Insn { bbix: 0, ix: 0 } < Node::Term { bbix: 0 });
+    assert!(Node::Insn { bbix: 0, ix: 0 } < Node::Term { bbix: 1 });
+    assert!(Node::Insn { bbix: 1, ix: 0 } > Node::Term { bbix: 0 });
+    assert!(Node::Insn { bbix: 0, ix: 0 } < Node::Insn { bbix: 0 , ix: 1 });
+    assert!(Node::Insn { bbix: 0, ix: 1 } < Node::Insn { bbix: 1 , ix: 0 });
 }
 
 #[derive(Debug)]

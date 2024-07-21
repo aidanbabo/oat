@@ -45,27 +45,36 @@ struct Timings {
 }
 
 fn print_timings(timings: &Timings) {
+    let mut total = Duration::default();
     if let Some(t) = timings.parsing {
         println!("Parsing: {t:?}");
+        total += t;
     }
     if let Some(t) = timings.typechecking {
         println!("Typechecking: {t:?}");
+        total += t;
     }
     if let Some(t) = timings.to_llvm {
         println!("Lowering to LLVM: {:?}", t);
+        total += t;
     }
     if let Some(t) = timings.interpreting {
         println!("Interpreting: {t:?}");
+        total += t;
     }
     if let Some(t) = timings.optimizations {
         println!("Optimizing: {t:?}");
+        total += t;
     }
     if let Some(t) = timings.to_assembly {
         println!("To Assembly: {t:?}");
+        total += t;
     }
     if let Some(t) = timings.linking {
         println!("Assembling and Linking: {t:?}");
+        total += t;
     }
+    println!("Total: {total:?}");
 }
 
 fn precompile_runtime(args: &Args, path: &Path) {
