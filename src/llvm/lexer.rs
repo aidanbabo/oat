@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     /// string literal
     StringLit,
@@ -119,7 +119,7 @@ pub enum TokenKind {
 // todo: make this only an integer and use lookup tables for actual string names
 // (this would remove lifetimes, arenaintern (probably) and save space)
 // this would involve an ast level change, big boy breaking
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TokenData<'a> {
     Int(i64),
     String(Box<str>),
@@ -129,9 +129,9 @@ pub enum TokenData<'a> {
 
 #[derive(Debug)]
 pub struct Token<'a> {
-    kind: TokenKind,
-    start: u32,
-    data: TokenData<'a>,
+    pub kind: TokenKind,
+    pub start: u32,
+    pub data: TokenData<'a>,
 }
 
 #[derive(Debug)]
@@ -191,6 +191,7 @@ fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, aren
     static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
         let mut m = HashMap::new();
         m.insert("i1", TokenKind::I1);
+        m.insert("i8", TokenKind::I8);
         m.insert("i32", TokenKind::I32);
         m.insert("i64", TokenKind::I64);
         m.insert("to", TokenKind::To);

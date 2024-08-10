@@ -66,13 +66,14 @@ pub enum Cnd {
 pub enum Insn<'a> {
     Binop(Bop, Ty<'a>, Operand<'a>, Operand<'a>),
     Alloca(Ty<'a>),
-    /// tye type of the loaded value and then the operand to load from
+    /// the type of the loaded value and then the operand to load from
     Load(Ty<'a>, Operand<'a>),
-    /// the type of the stored value, the value operand to store, and then the location to store to
+    /// the type of the stored value, the value operand to store, and the location to store to
     Store(Ty<'a>, Operand<'a>, Operand<'a>),
     Icmp(Cnd, Ty<'a>, Operand<'a>, Operand<'a>),
     Call(Ty<'a>, Operand<'a>, Vec<(Ty<'a>, Operand<'a>)>),
     Bitcast(Ty<'a>, Operand<'a>, Ty<'a>),
+    /// the type pointed to, the value to index from, and the index values
     Gep(Ty<'a>, Operand<'a>, Vec<Operand<'a>>),
 }
 

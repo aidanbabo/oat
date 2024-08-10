@@ -29,6 +29,8 @@ struct Args {
     #[arg(long)]
     timings: bool,
     #[arg(long)]
+    custom_ll_parsing: bool,
+    #[arg(long)]
     recompile_runtime: bool,
     // todo: add cross compilation support?
 }
@@ -142,11 +144,21 @@ fn main() {
     } else if ext == "ll" {
         let start = Instant::now();
         let s = fs::read_to_string(&args.path).unwrap();
-        let ll = match oat::llvm::parse(&s, &ll_arena) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("{e}");
-                process::exit(1);
+        let ll = if args.custom_ll_parsing {
+            match oat::llvm::custom_parser::parse(&s, &ll_arena) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{e:?}");
+                    process::exit(1);
+                }
+            }
+        } else {
+            match oat::llvm::parse(&s, &ll_arena) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
             }
         };
         timings.parsing = Some(start.elapsed());
