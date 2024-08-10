@@ -1,3 +1,4 @@
+// todo: custom parser (much faster? and less dependencies)
 use internment::{Arena, ArenaIntern};
 use std::str::FromStr;
 use crate::llvm::ast;

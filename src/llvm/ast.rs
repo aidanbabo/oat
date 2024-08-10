@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 use internment::ArenaIntern;
 
+// todo: change uid to an integer
+// this will involve using lookup tables to match to the string name
+// this will also mean that analysis will probably have to change to not having
+// a removal step and we'd need an "empty" instruction to allow analysis to go on without having to
+// reshuffle everything
 pub type Uid<'arena> = ArenaIntern<'arena, str>;
 pub type Gid<'arena> = ArenaIntern<'arena, str>;
 pub type Tid<'arena> = ArenaIntern<'arena, str>;

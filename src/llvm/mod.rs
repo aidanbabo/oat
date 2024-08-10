@@ -12,6 +12,10 @@ mod interp;
 pub(crate) mod parser_utils;
 mod print;
 
+// todo: priv
+pub mod lexer;
+pub mod custom_parser;
+
 pub use interp::ExecError;
 
 pub type ParseError<'a> = lalrpop_util::ParseError<usize, lalrpop_util::lexer::Token<'a>, &'static str>;
