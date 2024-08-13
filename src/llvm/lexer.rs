@@ -120,7 +120,7 @@ pub enum TokenKind {
 // (this would remove lifetimes, arenaintern (probably) and save space)
 // this would involve an ast level change, big boy breaking
 #[derive(Clone, Debug)]
-pub enum TokenData<'a> {
+enum TokenData<'a> {
     Int(i64),
     String(Box<str>),
     Id(ArenaIntern<'a, str>),
@@ -131,7 +131,23 @@ pub enum TokenData<'a> {
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub start: u32,
-    pub data: TokenData<'a>,
+    data: TokenData<'a>,
+}
+
+impl<'a> Token<'a> {
+    pub fn get_int(&self) -> i64 {
+        let TokenData::Int(i) = self.data else { unreachable!() };
+        i
+    }
+    // todo: uhhghghgh
+    pub fn get_str(&self) -> &str {
+        let TokenData::String(ref s) = self.data else { unreachable!() };
+        s
+    }
+    pub fn get_id(&self) -> ArenaIntern<'a, str> {
+        let TokenData::Id(id) = self.data else { unreachable!() };
+        id
+    }
 }
 
 #[derive(Debug)]
@@ -199,10 +215,11 @@ fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, aren
         m.insert("eq", TokenKind::Eq);
         m.insert("ne", TokenKind::Ne);
         m.insert("or", TokenKind::Or);
+        m.insert("xor", TokenKind::Xor);
         m.insert("and", TokenKind::And);
         m.insert("add", TokenKind::Add);
         m.insert("sub", TokenKind::Sub);
-        m.insert("mul", TokenKind::Xor);
+        m.insert("mul", TokenKind::Mul);
         m.insert("slt", TokenKind::Slt);
         m.insert("sle", TokenKind::Sle);
         m.insert("sgt", TokenKind::Sgt);
