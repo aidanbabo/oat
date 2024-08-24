@@ -1,6 +1,5 @@
-use internment::ArenaIntern;
-
-pub type Label<'arena> = ArenaIntern<'arena, str>;
+// index into Prog.labels
+pub type Label = usize;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Reg {
@@ -24,18 +23,18 @@ pub enum Reg {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Imm<'asm> {
+pub enum Imm {
     Word(i64),
-    Lbl(Label<'asm>),
+    Lbl(Label),
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Op<'asm> {
-    Imm(Imm<'asm>),
+pub enum Op {
+    Imm(Imm),
     Reg(Reg),
-    Ind1(Imm<'asm>),
+    Ind1(Imm),
     Ind2(Reg),
-    Ind3(Imm<'asm>, Reg),
+    Ind3(Imm, Reg),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -50,56 +49,57 @@ pub enum Cond {
 
 /// at&t :(
 #[derive(Clone, Copy, Debug)]
-pub enum Insn<'asm> {
-    Neg(Op<'asm>), // Reg?
-    Add(Op<'asm>, Op<'asm>),
-    Sub(Op<'asm>, Op<'asm>),
-    Imul(Op<'asm>, Reg),
-    Inc(Op<'asm>),
-    Dec(Op<'asm>),
-    Not(Op<'asm>),
-    And(Op<'asm>, Op<'asm>),
-    Or(Op<'asm>, Op<'asm>),
-    Xor(Op<'asm>, Op<'asm>),
-    Sar(Op<'asm>, Op<'asm>),
-    Shl(Op<'asm>, Op<'asm>),
-    Shr(Op<'asm>, Op<'asm>),
-    Set(Cond, Op<'asm>),
+pub enum Insn {
+    Neg(Op), // Reg?
+    Add(Op, Op),
+    Sub(Op, Op),
+    Imul(Op, Reg),
+    Inc(Op),
+    Dec(Op),
+    Not(Op),
+    And(Op, Op),
+    Or(Op, Op),
+    Xor(Op, Op),
+    Sar(Op, Op),
+    Shl(Op, Op),
+    Shr(Op, Op),
+    Set(Cond, Op),
     /// Ind, op
-    Lea(Op<'asm>, Op<'asm>),
+    Lea(Op, Op),
     /// src -> dest
-    Mov(Op<'asm>, Op<'asm>),
-    Push(Op<'asm>),
-    Pop(Op<'asm>),
-    Cmp(Op<'asm>, Op<'asm>),
-    Jmp(Op<'asm>),
+    Mov(Op, Op),
+    Push(Op),
+    Pop(Op),
+    Cmp(Op, Op),
+    Jmp(Op),
     Ret,
-    J(Cond, Op<'asm>),
-    Call(Op<'asm>),
+    J(Cond, Op),
+    Call(Op),
 }
 
 #[derive(Debug)]
-pub struct CodeBlock<'asm> {
+pub struct CodeBlock {
     pub global: bool,
-    pub label: Label<'asm>,
-    pub insns: Vec<Insn<'asm>>,
+    pub label: Label,
+    pub insns: Vec<Insn>,
 }
 
 #[derive(Debug)]
-pub enum Data<'asm> {
-    Quad(Imm<'asm>),
+pub enum Data {
+    Quad(Imm),
     String(String),
 }
 
 #[derive(Debug)]
-pub struct DataBlock<'asm> {
+pub struct DataBlock {
     pub global: bool,
-    pub label: Label<'asm>,
-    pub data: Vec<Data<'asm>>,
+    pub label: Label,
+    pub data: Vec<Data>,
 }
 
 #[derive(Debug)]
-pub struct Prog<'asm> {
-    pub code: Vec<CodeBlock<'asm>>,
-    pub data: Vec<DataBlock<'asm>>,
+pub struct Prog {
+    pub code: Vec<CodeBlock>,
+    pub data: Vec<DataBlock>,
+    pub labels: Vec<Box<str>>,
 }

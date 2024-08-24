@@ -1,23 +1,31 @@
-use internment::Arena;
 use std::collections::HashMap;
 
 use crate::llvm::ast as ll;
 use crate::backend::platform;
 use super::ast::*;
 
-type Layout<'ll> = HashMap<ll::Uid<'ll>, Op<'static>>;
+type Layout<'ll> = HashMap<ll::Uid<'ll>, Op>;
 
-struct FunctionContext<'ll, 'asm> {
-    arena: &'asm Arena<str>,
+struct LabelIds {
+    labels: Vec<Box<str>>,
+    mapping: HashMap<Box<str>, usize>,
+}
+
+struct FunctionContext<'ll> {
     layout: Layout<'ll>,
     name: ll::Lbl<'ll>,
     tdecls: &'ll HashMap<ll::Uid<'ll>, ll::Ty<'ll>>,
 }
 
-pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> {
+pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
     let mut p = Prog {
         code: Vec::new(),
         data: Vec::new(),
+        labels: Vec::new(),
+    };
+    let mut labels = LabelIds {
+        labels: Vec::new(),
+        mapping: Default::default(),
     };
 
     // assert!(ll.edecls.is_empty(), "no support for edecls");
@@ -25,8 +33,8 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
     for (name, (_ty, ginit)) in ll.gdecls {
         let block = DataBlock {
             global: true,
-            label: arena.intern_string(platform::mangle(&name)),
-            data: compile_global(arena, ginit),
+            label: make_global_label(&mut labels, &name),
+            data: compile_global(&mut labels, ginit),
         };
         p.data.push(block);
     }
@@ -35,35 +43,61 @@ pub fn x64_from_llvm<'asm>(ll: ll::Prog, arena: &'asm Arena<str>) -> Prog<'asm> 
         let (arg_layout, stack_layout) = layout(&fdecl);
 
         let fctx = FunctionContext {
-            arena,
             layout: stack_layout,
             name,
             tdecls: &ll.tdecls,
         };
 
-        let code_blocks = compile_function(fctx, arg_layout, name, fdecl);
+        let code_blocks = compile_function(fctx, arg_layout, &mut labels, name, fdecl);
         p.code.extend(code_blocks);
     }
+    p.labels = labels.labels;
     p
 }
 
-fn compile_global<'asm>(arena: &'asm Arena<str>, ginit: ll::Ginit<'_>) -> Vec<Data<'asm>> {
+fn make_global_label(labels: &mut LabelIds, s: &str) -> usize {
+    make_label(labels, s, true)
+}
+
+fn make_local_label(labels: &mut LabelIds, fname: &str, s: &str) -> usize {
+    let s = format!("{}.{}", fname, s);
+    make_label(labels, &s, false)
+}
+
+fn make_label(labels: &mut LabelIds, s: &str, mangle: bool) -> usize {
+    let label = if mangle { 
+        platform::mangle(s)
+    } else {
+        s.to_string()
+    };
+    let label = label.to_string().into_boxed_str();
+
+    if let Some(id) = labels.mapping.get(&label) {
+        return *id;
+    }
+    let ix = labels.labels.len();
+    labels.labels.push(label.clone());
+    labels.mapping.insert(label, ix);
+    ix
+}
+
+fn compile_global(labels: &mut LabelIds, ginit: ll::Ginit<'_>) -> Vec<Data> {
     match ginit {
         ll::Ginit::Null => vec![Data::Quad(Imm::Word(0))],
-        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(arena.intern_string(platform::mangle(&gid))))],
+        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(make_global_label(labels, &gid)))],
         ll::Ginit::Int(i) => vec![Data::Quad(Imm::Word(i))],
         ll::Ginit::String(s) => vec![Data::String(s)],
-        ll::Ginit::Array(gs) | ll::Ginit::Struct(gs) => gs.into_iter().flat_map(|(_, g)| compile_global(arena, g)).collect(),
-        ll::Ginit::Bitcast(_, g, _) => compile_global(arena, *g),
+        ll::Ginit::Array(gs) | ll::Ginit::Struct(gs) => gs.into_iter().flat_map(|(_, g)| compile_global(labels, g)).collect(),
+        ll::Ginit::Bitcast(_, g, _) => compile_global(labels, *g),
     }
 }
 
-fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Vec<(ll::Uid<'ll>, Op<'asm>)>, name: ll::Gid<'ll>, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock<'asm>> {
+fn compile_function<'ll>(fctx: FunctionContext<'ll>, arg_layout: Vec<(ll::Uid<'ll>, Op)>, labels: &mut LabelIds, name: ll::Gid<'ll>, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock> {
     let stack_size = fctx.layout.len();
 
     let mut b1 = CodeBlock {
         global: true,
-        label: fctx.arena.intern_string(platform::mangle(&name)),
+        label: make_global_label(labels, &name),
         insns: vec![
             Insn::Push(Op::Reg(Reg::Rbp)),
             Insn::Mov(Op::Reg(Reg::Rsp), Op::Reg(Reg::Rbp)),
@@ -82,16 +116,16 @@ fn compile_function<'ll, 'asm>(fctx: FunctionContext<'ll, 'asm>, arg_layout: Vec
 
     
     let mut blocks = Vec::new();
-    let entry = compile_block(&fctx, b1, fdecl.cfg.entry);
+    let entry = compile_block(&fctx, labels, b1, fdecl.cfg.entry);
     blocks.push(entry);
 
     for (lbl, b) in fdecl.cfg.blocks {
-        blocks.push(compile_labelled_block(&fctx, lbl, b));
+        blocks.push(compile_labelled_block(&fctx, labels, lbl, b));
     }
     blocks
 }
 
-fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op<'static>)>, Layout<'ll>) {
+fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op)>, Layout<'ll>) {
     let arg_layout = fdecl
         .params
         .iter()
@@ -108,7 +142,7 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op<'static>)>, Lay
         .collect();
 
 
-    fn arg_callee_loc(n: i64) -> Op<'static> {
+    fn arg_callee_loc(n: i64) -> Op {
         if n < 6 {
             Op::Ind3(Imm::Word(-8 * (n + 1)), Reg::Rbp)
         } else {
@@ -144,27 +178,27 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op<'static>)>, Lay
     (arg_layout, layout)
 }
 
-fn compile_labelled_block<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, label: ll::Uid<'ll>, block: ll::Block<'ll>) -> CodeBlock<'asm> {
+fn compile_labelled_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut LabelIds, label: ll::Uid<'ll>, block: ll::Block<'ll>) -> CodeBlock {
     let b = CodeBlock {
         global: false,
-        label: mk_lbl(fctx, label),
+        label: make_local_label(labels, &fctx.name, &label),
         insns: Vec::new(),
     };
-    compile_block(fctx, b, block)
+    compile_block(fctx, labels, b, block)
 }
 
-fn compile_block<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, mut asm: CodeBlock<'asm>, ll: ll::Block<'ll>) -> CodeBlock<'asm> {
+fn compile_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut LabelIds, mut asm: CodeBlock, ll: ll::Block<'ll>) -> CodeBlock {
     for (uid, insn) in ll.insns {
-        compile_insn(fctx, &mut asm, uid, insn);
+        compile_insn(fctx, labels, &mut asm, uid, insn);
     }
-    compile_terminator(fctx, asm, ll.term.1)
+    compile_terminator(fctx, labels, asm, ll.term.1)
 }
 
-fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBlock<'asm>, uid: ll::Uid<'ll>, insn: ll::Insn<'ll>) {
+fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut LabelIds, asm: &mut CodeBlock, uid: ll::Uid<'ll>, insn: ll::Insn<'ll>) {
     match insn {
         ll::Insn::Binop(bop, _, lhs, rhs) => {
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), lhs));
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rcx), rhs));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), lhs));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rcx), rhs));
             let bop = match bop {
                 ll::Bop::Add => Insn::Add(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
                 ll::Bop::Sub => Insn::Sub(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
@@ -184,18 +218,18 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rsp), fctx.layout[&uid]));
         }
         ll::Insn::Load(_, op) => {
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), op));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), op));
             asm.insns.push(Insn::Mov(Op::Ind2(Reg::Rax), Op::Reg(Reg::Rax)));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
         ll::Insn::Store(_, src, dst) => {
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), src));
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rcx), dst));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), src));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rcx), dst));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), Op::Ind2(Reg::Rcx)));
         }
         ll::Insn::Icmp(cnd, _, lhs, rhs) => {
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rdi), lhs));
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rsi), rhs));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rdi), lhs));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rsi), rhs));
             asm.insns.push(Insn::Xor(Op::Reg(Reg::Rax), Op::Reg(Reg::Rax)));
             asm.insns.push(Insn::Cmp(Op::Reg(Reg::Rsi), Op::Reg(Reg::Rdi)));
             asm.insns.push(Insn::Set(compile_cnd(cnd), Op::Reg(Reg::Rax)));
@@ -204,13 +238,13 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
         ll::Insn::Call(ret_ty, fname, args) => {
             for (i, (_, arg)) in args.into_iter().enumerate().rev() {
                 let insn = match i {
-                    0 => compile_operand(fctx, Op::Reg(Reg::Rdi), arg),
-                    1 => compile_operand(fctx, Op::Reg(Reg::Rsi), arg),
-                    2 => compile_operand(fctx, Op::Reg(Reg::Rdx), arg),
-                    3 => compile_operand(fctx, Op::Reg(Reg::Rcx), arg),
-                    4 => compile_operand(fctx, Op::Reg(Reg::R8), arg),
-                    5 => compile_operand(fctx, Op::Reg(Reg::R9), arg),
-                    _ => Insn::Push(translate_op(fctx, arg)),
+                    0 => compile_operand(fctx, labels, Op::Reg(Reg::Rdi), arg),
+                    1 => compile_operand(fctx, labels, Op::Reg(Reg::Rsi), arg),
+                    2 => compile_operand(fctx, labels, Op::Reg(Reg::Rdx), arg),
+                    3 => compile_operand(fctx, labels, Op::Reg(Reg::Rcx), arg),
+                    4 => compile_operand(fctx, labels, Op::Reg(Reg::R8), arg),
+                    5 => compile_operand(fctx, labels, Op::Reg(Reg::R9), arg),
+                    _ => Insn::Push(translate_op(fctx, labels, arg)),
                 };
                 asm.insns.push(insn);
             }
@@ -218,10 +252,10 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             match fname {
                 ll::Operand::Gid(lbl) => {
                     // fastpath
-                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(fctx.arena.intern_string(platform::mangle(&lbl))))));
+                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(make_global_label(labels, &lbl)))));
                 }
                 _ => {
-                    asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), fname));
+                    asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), fname));
                     asm.insns.push(Insn::Call(Op::Reg(Reg::Rax)));
                 }
             }
@@ -231,14 +265,14 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
             }
         }
         ll::Insn::Bitcast(_, o, _) => {
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), o));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), o));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
         ll::Insn::Gep(t, op, path) => {
             /// this is the size as determined by llvmlite, so it's a little nonsensical
             /// this also means we are abi incompatible with code compiled via the --clang option,
             /// which is fine ig
-            fn size_ty<'ll>(fctx: &FunctionContext<'ll, '_>, ty: &ll::Ty<'ll>) -> i64 {
+            fn size_ty<'ll>(fctx: &FunctionContext<'ll>, ty: &ll::Ty<'ll>) -> i64 {
                 match ty {
                     ll::Ty::Void | ll::Ty::Fun(..) => panic!("undefined size, what the hell"),
                     ll::Ty::I8 => 1, // this should only ever happen in compiling ll files
@@ -249,7 +283,7 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
                 }
             }
 
-            fn index_into<'ll>(fctx: &FunctionContext<'ll, '_>, ts: &[ll::Ty<'ll>], n: i64) -> i64 {
+            fn index_into<'ll>(fctx: &FunctionContext<'ll>, ts: &[ll::Ty<'ll>], n: i64) -> i64 {
                 ts
                     .iter()
                     .take(n as usize)
@@ -257,7 +291,7 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
                     .sum()
             }
 
-            fn path_through<'ll, 'asm>(asm: &mut CodeBlock<'asm>, fctx: &FunctionContext<'ll, 'asm>, curr_ty: ll::Ty<'ll>, p: ll::Operand<'ll>) -> ll::Ty<'ll> {
+            fn path_through<'ll, 'asm>(asm: &mut CodeBlock, fctx: &FunctionContext<'ll>, labels: &mut LabelIds, curr_ty: ll::Ty<'ll>, p: ll::Operand<'ll>) -> ll::Ty<'ll> {
                 match curr_ty {
                     ll::Ty::Struct(mut ts) => {
                             let ll::Operand::Const(n) = p else { panic!("non-const op for struct index") };
@@ -277,44 +311,44 @@ fn compile_insn<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, asm: &mut CodeBloc
                             *new_ty
                         } else {
                             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), Op::Reg(Reg::Rcx)));
-                            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), p));
+                            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), p));
                             asm.insns.push(Insn::Imul(Op::Imm(Imm::Word(size_ty(fctx, &new_ty))), Reg::Rax));
                             asm.insns.push(Insn::Add(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)));
                             *new_ty
                         }
                     }
-                    ll::Ty::Named(name) => path_through(asm, fctx, fctx.tdecls[&name].clone(), p),
+                    ll::Ty::Named(name) => path_through(asm, fctx, labels, fctx.tdecls[&name].clone(), p),
                     _ => unreachable!("bad gep op"),
                 }
             }
 
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), op));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), op));
             path
                 .into_iter()
-                .fold(ll::Ty::Array(0, Box::new(t)), |ty, p| path_through(asm, fctx, ty, p));
+                .fold(ll::Ty::Array(0, Box::new(t)), |ty, p| path_through(asm, fctx, labels, ty, p));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
     }
 }
 
-fn compile_terminator<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, mut asm: CodeBlock<'asm>, term: ll::Terminator<'ll>) -> CodeBlock<'asm> {
+fn compile_terminator<'ll>(fctx: &FunctionContext<'ll>, labels: &mut LabelIds, mut asm: CodeBlock, term: ll::Terminator<'ll>) -> CodeBlock {
     match term {
         ll::Terminator::Ret(_ty, var) => {
             if let Some(var) = var {
-                asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), var));
+                asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), var));
             }
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rbp), Op::Reg(Reg::Rsp)));
             asm.insns.push(Insn::Pop(Op::Reg(Reg::Rbp)));
             asm.insns.push(Insn::Ret);
         }
         ll::Terminator::Br(lbl) => {
-            asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(mk_lbl(fctx, lbl)))));
+            asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(make_local_label(labels, &fctx.name, &lbl)))));
         }
         ll::Terminator::Cbr(op, true_lbl, false_lbl) => {
-            asm.insns.push(compile_operand(fctx, Op::Reg(Reg::Rax), op));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), op));
             asm.insns.push(Insn::Cmp(Op::Imm(Imm::Word(0)), Op::Reg(Reg::Rax)));
-            asm.insns.push(Insn::J(Cond::Eq, Op::Imm(Imm::Lbl(mk_lbl(fctx, false_lbl)))));
-            asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(mk_lbl(fctx, true_lbl)))));
+            asm.insns.push(Insn::J(Cond::Eq, Op::Imm(Imm::Lbl(make_local_label(labels, &fctx.name, &false_lbl)))));
+            asm.insns.push(Insn::Jmp(Op::Imm(Imm::Lbl(make_local_label(labels, &fctx.name, &true_lbl)))));
         }
     }
 
@@ -332,22 +366,18 @@ fn compile_cnd(cnd: ll::Cnd) -> Cond {
     }
 }
 
-fn mk_lbl<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, lbl: ll::Lbl<'ll>) -> Label<'asm> {
-    fctx.arena.intern_string(format!("{}.{}", fctx.name, lbl))
-}
-
-fn compile_operand<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, dst: Op<'asm>, src: ll::Operand<'ll>) -> Insn<'asm> {
+fn compile_operand<'ll>(fctx: &FunctionContext<'ll>, labels: &mut LabelIds, dst: Op, src: ll::Operand<'ll>) -> Insn {
     match src {
-        ll::Operand::Gid(_) => Insn::Lea(translate_op(fctx, src), dst),
-        _ => Insn::Mov(translate_op(fctx, src), dst),
+        ll::Operand::Gid(_) => Insn::Lea(translate_op(fctx, labels, src), dst),
+        _ => Insn::Mov(translate_op(fctx, labels, src), dst),
     }
 }
 
-fn translate_op<'ll, 'asm>(fctx: &FunctionContext<'ll, 'asm>, op: ll::Operand<'ll>) -> Op<'asm> {
+fn translate_op<'ll>(fctx: &FunctionContext<'ll>, labels: &mut LabelIds, op: ll::Operand<'ll>) -> Op {
     match op {
         ll::Operand::Null => Op::Imm(Imm::Word(0)),
         ll::Operand::Const(c) => Op::Imm(Imm::Word(c)),
-        ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(fctx.arena.intern_string(platform::mangle(&gid))), Reg::Rip),
+        ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(make_global_label(labels, &gid)), Reg::Rip),
         ll::Operand::Id(uid) => fctx.layout[&uid],
     }
 }

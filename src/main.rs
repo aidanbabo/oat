@@ -213,8 +213,7 @@ fn main() {
 
         asm_path
     } else {
-        let arena = Arena::new();
-        let asm_prog = oat::backend::x64::x64_from_llvm(ll_prog, &arena);
+        let asm_prog = oat::backend::x64::x64_from_llvm(ll_prog);
 
         if args.print_asm {
             oat::backend::x64::print(&asm_prog);

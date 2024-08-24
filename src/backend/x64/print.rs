@@ -8,27 +8,31 @@ pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
         writeln!(w, "\t.data")?;
     }
     for datum in &prog.data {
-        write_data_block(&mut w, datum)?;
+        write_data_block(&mut w, &prog.labels, datum)?;
     }
 
     if !prog.code.is_empty() {
         writeln!(w, "\t.text")?;
     }
     for code in &prog.code {
-        write_code_block(&mut w, code)?;
+        write_code_block(&mut w, &prog.labels, code)?;
     }
 
     Ok(())
 }
 
-fn write_data_block<W: io::Write>(w: &mut W, db: &DataBlock) -> io::Result<()> {
+fn write_data_block<W: io::Write>(w: &mut W, labels: &[Box<str>], db: &DataBlock) -> io::Result<()> {
     if db.global {
-        writeln!(w, "\t.globl {}", db.label)?;
+        writeln!(w, "\t.globl {}", labels[db.label])?;
     }
-    writeln!(w, "{}:", db.label)?;
+    writeln!(w, "{}:", labels[db.label])?;
     for datum in &db.data {
         match datum {
-            Data::Quad(imm) => writeln!(w, "\t.quad\t{imm}")?,
+            Data::Quad(imm) => {
+                write!(w, "\t.quad\t")?;
+                write_imm(w, labels, *imm)?;
+                writeln!(w)?;
+            }
             // todo: escape?
             Data::String(s) => if s.ends_with('\0') {
                 let s = &s[..s.len() - 1];
@@ -42,36 +46,36 @@ fn write_data_block<W: io::Write>(w: &mut W, db: &DataBlock) -> io::Result<()> {
     Ok(())
 }
 
-fn write_code_block<W: io::Write>(w: &mut W, cb: &CodeBlock) -> io::Result<()> {
+fn write_code_block<W: io::Write>(w: &mut W, labels: &[Box<str>], cb: &CodeBlock) -> io::Result<()> {
     if cb.global {
-        writeln!(w, "\t.globl {}", cb.label)?;
+        writeln!(w, "\t.globl {}", labels[cb.label])?;
     }
-    writeln!(w, "{}:", cb.label)?;
+    writeln!(w, "{}:", labels[cb.label])?;
     for insn in &cb.insns {
         write!(w, "\t")?;
-        write_insn(w, insn)?;
+        write_insn(w, labels, insn)?;
         writeln!(w)?;
     }
     Ok(())
 }
 
-fn write_insn<W: io::Write>(w: &mut W, insn: &Insn) -> io::Result<()> {
+fn write_insn<W: io::Write>(w: &mut W, labels: &[Box<str>], insn: &Insn) -> io::Result<()> {
     match insn {
-        Insn::Neg(op) => write!(w, "negq\t{op}"),
-        Insn::Add(o1, o2) => write!(w, "addq\t{o1}, {o2}"),
-        Insn::Sub(o1, o2) => write!(w, "subq\t{o1}, {o2}"),
-        Insn::Imul(o1, o2) => write!(w, "imulq\t{o1}, {o2}"),
-        Insn::Inc(o) => write!(w, "incq\t{o}"),
-        Insn::Dec(o) => write!(w, "decq\t{o}"),
-        Insn::Not(o) => write!(w, "notq\t{o}"),
-        Insn::And(o1, o2) => write!(w, "andq\t{o1}, {o2}"),
-        Insn::Or(o1, o2) => write!(w, "orq\t{o1}, {o2}"),
-        Insn::Xor(o1, o2) => write!(w, "xorq\t{o1}, {o2}"),
-        Insn::Lea(o1, o2) => write!(w, "leaq\t{o1}, {o2}"),
-        Insn::Mov(o1, o2) => write!(w, "movq\t{o1}, {o2}"),
-        Insn::Push(o) => write!(w, "pushq\t{o}"),
-        Insn::Pop(o) => write!(w, "popq\t{o}"),
-        Insn::Cmp(o1, o2) => write!(w, "cmpq\t{o1}, {o2}"),
+        Insn::Neg(o) => write_unary_insn(w, labels, "negq\t", *o),
+        Insn::Add(o1, o2) => write_binary_insn(w, labels, "addq\t", *o1, *o2),
+        Insn::Sub(o1, o2) => write_binary_insn(w, labels, "subq\t", *o1, *o2),
+        Insn::Imul(o1, reg) => write_binary_insn(w, labels, "imulq\t", *o1, Op::Reg(*reg)),
+        Insn::Inc(o) => write_unary_insn(w, labels, "incq\t", *o),
+        Insn::Dec(o) => write_unary_insn(w, labels, "decq\t", *o),
+        Insn::Not(o) => write_unary_insn(w, labels, "notq\t", *o),
+        Insn::And(o1, o2) => write_binary_insn(w, labels, "andq\t", *o1, *o2),
+        Insn::Or(o1, o2) => write_binary_insn(w, labels, "orq\t", *o1, *o2),
+        Insn::Xor(o1, o2) => write_binary_insn(w, labels, "xorq\t", *o1, *o2),
+        Insn::Lea(o1, o2) => write_binary_insn(w, labels, "leaq\t", *o1, *o2),
+        Insn::Mov(o1, o2) => write_binary_insn(w, labels, "movq\t", *o1, *o2),
+        Insn::Push(o) => write_unary_insn(w, labels, "pushq\t", *o),
+        Insn::Pop(o) => write_unary_insn(w, labels, "popq\t", *o),
+        Insn::Cmp(o1, o2) => write_binary_insn(w, labels, "cmpq\t", *o1, *o2),
         Insn::Ret => write!(w, "retq"),
         // special handling for jumps
         Insn::Jmp(..) | Insn::J(..) | Insn::Call(..) => {
@@ -91,12 +95,19 @@ fn write_insn<W: io::Write>(w: &mut W, insn: &Insn) -> io::Result<()> {
                 _ => unreachable!(),
             };
 
-            match op {
-                Op::Imm(imm) => write!(w, "{imm}"),
+            match *op {
+                Op::Imm(imm) => write_imm(w, labels, imm),
                 Op::Reg(reg) => write!(w, "*{reg}"),
-                Op::Ind1(imm) => write!(w, "*{imm}"),
+                Op::Ind1(imm) => {
+                    write!(w, "*")?;
+                    write_imm(w, labels, imm)
+                }
                 Op::Ind2(reg) => write!(w, "*({reg})"),
-                Op::Ind3(imm, reg) => write!(w, "*{imm}({reg})"),
+                Op::Ind3(imm, reg) => {
+                    write!(w, "*")?;
+                    write_imm(w, labels, imm)?;
+                    write!(w, "({reg})")
+                }
             }
         }
         // special handling for shifts
@@ -107,41 +118,63 @@ fn write_insn<W: io::Write>(w: &mut W, insn: &Insn) -> io::Result<()> {
                 Insn::Shr(..) => "shrq",
                 _ => unreachable!(),
             };
-            match o1 {
-                Op::Imm(_) => write!(w, "{opcode}\t{o1}, {o2}"),
-                Op::Reg(Reg::Rcx) => write!(w, "{opcode}\t%cl, {o2}"),
+            match *o1 {
+                Op::Imm(_) => {
+                    write!(w, "{opcode}\t")?;
+                    write_op(w, labels, *o1)?;
+                    write!(w, ", ")?;
+                    write_op(w, labels, *o2)
+                }
+                Op::Reg(Reg::Rcx) => {
+                    write!(w, "{opcode}\t%cl, ")?;
+                    write_op(w, labels, *o2)
+                }
                 _ => unreachable!("shift operation with invalid operands"),
             }
         }
         // special handling for byte registers
         Insn::Set(cnd, op) => {
             write!(w, "set{cnd}\t")?;
-            match op {
-                Op::Reg(r) => write!(w, "{}", byte_reg(*r)),
-                _ => write!(w, "{op}"),
+            match *op {
+                Op::Reg(r) => write!(w, "{}", byte_reg(r)),
+                op => write_op(w, labels, op),
             }
         }
     }
 }
 
-impl fmt::Display for Op<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Op::Imm(imm) => write!(f, "${imm}"),
-            Op::Reg(reg) => write!(f, "{reg}"),
-            Op::Ind1(imm) => write!(f, "{imm}"),
-            Op::Ind2(reg) => write!(f, "({reg})"),
-            Op::Ind3(imm, reg) => write!(f, "{imm}({reg})"),
+fn write_unary_insn<W: io::Write>(w: &mut W, labels: &[Box<str>], s: &str, op: Op) -> io::Result<()> {
+    write!(w, "{s}")?;
+    write_op(w, labels, op)
+}
+
+fn write_binary_insn<W: io::Write>(w: &mut W, labels: &[Box<str>], s: &str, o1: Op, o2: Op) -> io::Result<()> {
+    write!(w, "{s}")?;
+    write_op(w, labels, o1)?;
+    write!(w, ", ")?;
+    write_op(w, labels, o2)
+}
+
+fn write_op<W: io::Write>(w: &mut W, labels: &[Box<str>], op: Op) -> io::Result<()> {
+    match op {
+        Op::Imm(imm) => {
+            write!(w, "$")?;
+            write_imm(w, labels, imm)
+        }
+        Op::Reg(reg) => write!(w, "{reg}"),
+        Op::Ind1(imm) => write_imm(w, labels, imm),
+        Op::Ind2(reg) => write!(w, "({reg})"),
+        Op::Ind3(imm, reg) => {
+            write_imm(w, labels, imm)?;
+            write!(w, "({reg})")
         }
     }
 }
 
-impl fmt::Display for Imm<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Imm::Word(w) => write!(f, "{w}"),
-            Imm::Lbl(l) => write!(f, "{l}"),
-        }
+fn write_imm<W: io::Write>(w: &mut W, labels: &[Box<str>], imm: Imm) -> io::Result<()> {
+    match imm {
+        Imm::Word(x) => write!(w, "{x}"),
+        Imm::Lbl(ix) => write!(w, "{}", labels[ix]),
     }
 }
 
