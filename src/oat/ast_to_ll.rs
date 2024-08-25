@@ -50,7 +50,7 @@ impl<'oat, 'll> FunContext<'oat, 'll> {
     }
 }
 
-fn tipe(interner: &mut StrInterner, ot: oast::Ty<'_>) -> llast::Ty {
+fn tipe(interner: &mut StrInterner<llast::Tid>, ot: oast::Ty<'_>) -> llast::Ty {
     use oast::TyKind as TK;
     use llast::Ty as Lty;
     match ot.kind {
@@ -83,8 +83,8 @@ pub struct Context<'oat, 'll> {
     ll_to_oat_structs: HashMap<llast::Tid, oast::Ident<'oat>>,
 
     // interners
-    label_interner: StrInterner,
-    type_interner: StrInterner,
+    label_interner: StrInterner<llast::Lbl>,
+    type_interner: StrInterner<llast::Tid>,
 }
 
 impl<'oat, 'll> Context<'oat, 'll> {

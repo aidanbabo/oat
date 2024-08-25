@@ -50,7 +50,7 @@ fn write_ty<W: io::Write>(w: &mut W, tables: &LookupTables, ty: &Ty) -> io::Resu
             write_separated(w, tables, ", ", ts, write_ty)?;
             write!(w, ")")
         }
-        Ty::Named(id) => write!(w, "%{}", tables.types[*id as usize]),
+        Ty::Named(id) => write!(w, "%{}", tables.types[id.ix()]),
     }
 }
 
@@ -162,7 +162,7 @@ fn write_insn<W: io::Write>(w: &mut W, tables: &LookupTables, insn: &Insn<'_>) -
 }
 
 fn write_label<W: io::Write>(w: &mut W, tables: &LookupTables, lid: Lbl) -> io::Result<()> {
-    write!(w, "{}", tables.labels[lid as usize])
+    write!(w, "{}", tables.labels[lid.ix()])
 }
 
 fn write_term<W: io::Write>(w: &mut W, tables: &LookupTables, term: &Terminator<'_>) -> io::Result<()> {
@@ -253,8 +253,9 @@ fn write_ginit<W: io::Write>(w: &mut W, tables: &LookupTables, ginit: &Ginit<'_>
 }
 
 fn write_prog<W: io::Write>(w: &mut W, tables: &LookupTables, prog: &Prog<'_>) -> io::Result<()> {
+    // bug: todo: order these so there are no forward declarations to non-struct types
     for (tid, t) in &prog.tdecls {
-        write!(w, "%{} = type ", tables.types[*tid as usize])?;
+        write!(w, "%{} = type ", tables.types[tid.ix()])?;
         write_ty(w, tables,t)?;
         writeln!(w)?;
     }

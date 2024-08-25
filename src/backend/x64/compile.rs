@@ -20,7 +20,7 @@ pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
         data: Vec::new(),
         labels: Vec::new(),
     };
-    let mut labels = StrInterner::default();
+    let mut labels = StrInterner::<Label>::default();
     // assert!(ll.edecls.is_empty(), "no support for edecls");
 
     for (name, (_ty, ginit)) in ll.gdecls {
@@ -49,16 +49,16 @@ pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
     p
 }
 
-fn make_global_label(labels: &mut StrInterner, s: &str) -> Label {
+fn make_global_label(labels: &mut StrInterner<Label>, s: &str) -> Label {
     make_label(labels, s, true)
 }
 
-fn make_local_label(labels: &mut StrInterner, fctx: &FunctionContext<'_>, label_ix: Label) -> Label {
-    let s = format!("{}.{}", &fctx.name, &fctx.labels[label_ix as usize]);
+fn make_local_label(labels: &mut StrInterner<Label>, fctx: &FunctionContext<'_>, label_ix: ll::Lbl) -> Label {
+    let s = format!("{}.{}", &fctx.name, &fctx.labels[label_ix.ix()]);
     make_label(labels, &s, false)
 }
 
-fn make_label(labels: &mut StrInterner, s: &str, mangle: bool) -> Label {
+fn make_label(labels: &mut StrInterner<Label>, s: &str, mangle: bool) -> Label {
     let label = if mangle { 
         platform::mangle(s)
     } else {
@@ -67,7 +67,7 @@ fn make_label(labels: &mut StrInterner, s: &str, mangle: bool) -> Label {
     labels.intern_string(label)
 }
 
-fn compile_global(labels: &mut StrInterner, ginit: ll::Ginit<'_>) -> Vec<Data> {
+fn compile_global(labels: &mut StrInterner<Label>, ginit: ll::Ginit<'_>) -> Vec<Data> {
     match ginit {
         ll::Ginit::Null => vec![Data::Quad(Imm::Word(0))],
         ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(make_global_label(labels, &gid)))],
@@ -78,7 +78,7 @@ fn compile_global(labels: &mut StrInterner, ginit: ll::Ginit<'_>) -> Vec<Data> {
     }
 }
 
-fn compile_function<'ll>(fctx: FunctionContext<'ll>, arg_layout: Vec<(ll::Uid<'ll>, Op)>, labels: &mut StrInterner, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock> {
+fn compile_function<'ll>(fctx: FunctionContext<'ll>, arg_layout: Vec<(ll::Uid<'ll>, Op)>, labels: &mut StrInterner<Label>, fdecl: ll::Fdecl<'ll>) -> Vec<CodeBlock> {
     let stack_size = fctx.layout.len();
 
     let mut b1 = CodeBlock {
@@ -164,7 +164,7 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op)>, Layout<'ll>)
     (arg_layout, layout)
 }
 
-fn compile_labelled_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, label_ix: Label, block: ll::Block<'ll>) -> CodeBlock {
+fn compile_labelled_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, label_ix: ll::Lbl, block: ll::Block<'ll>) -> CodeBlock {
     let b = CodeBlock {
         global: false,
         label: make_local_label(labels, fctx, label_ix),
@@ -173,14 +173,14 @@ fn compile_labelled_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInte
     compile_block(fctx, labels, b, block)
 }
 
-fn compile_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, mut asm: CodeBlock, ll: ll::Block<'ll>) -> CodeBlock {
+fn compile_block<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, mut asm: CodeBlock, ll: ll::Block<'ll>) -> CodeBlock {
     for (uid, insn) in ll.insns {
         compile_insn(fctx, labels, &mut asm, uid, insn);
     }
     compile_terminator(fctx, labels, asm, ll.term.1)
 }
 
-fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, asm: &mut CodeBlock, uid: ll::Uid<'ll>, insn: ll::Insn<'ll>) {
+fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, asm: &mut CodeBlock, uid: ll::Uid<'ll>, insn: ll::Insn<'ll>) {
     match insn {
         ll::Insn::Binop(bop, _, lhs, rhs) => {
             asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), lhs));
@@ -277,7 +277,7 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, asm:
                     .sum()
             }
 
-            fn path_through<'ll>(asm: &mut CodeBlock, fctx: &FunctionContext<'ll>, labels: &mut StrInterner, curr_ty: ll::Ty, p: ll::Operand<'ll>) -> ll::Ty {
+            fn path_through<'ll>(asm: &mut CodeBlock, fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, curr_ty: ll::Ty, p: ll::Operand<'ll>) -> ll::Ty {
                 match curr_ty {
                     ll::Ty::Struct(mut ts) => {
                             let ll::Operand::Const(n) = p else { panic!("non-const op for struct index") };
@@ -317,7 +317,7 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, asm:
     }
 }
 
-fn compile_terminator<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, mut asm: CodeBlock, term: ll::Terminator<'ll>) -> CodeBlock {
+fn compile_terminator<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, mut asm: CodeBlock, term: ll::Terminator<'ll>) -> CodeBlock {
     match term {
         ll::Terminator::Ret(_ty, var) => {
             if let Some(var) = var {
@@ -352,14 +352,14 @@ fn compile_cnd(cnd: ll::Cnd) -> Cond {
     }
 }
 
-fn compile_operand<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, dst: Op, src: ll::Operand<'ll>) -> Insn {
+fn compile_operand<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, dst: Op, src: ll::Operand<'ll>) -> Insn {
     match src {
         ll::Operand::Gid(_) => Insn::Lea(translate_op(fctx, labels, src), dst),
         _ => Insn::Mov(translate_op(fctx, labels, src), dst),
     }
 }
 
-fn translate_op<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, op: ll::Operand<'ll>) -> Op {
+fn translate_op<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label>, op: ll::Operand<'ll>) -> Op {
     match op {
         ll::Operand::Null => Op::Imm(Imm::Word(0)),
         ll::Operand::Const(c) => Op::Imm(Imm::Word(c)),

@@ -1,5 +1,18 @@
-// index into Prog.labels
-pub type Label = u32;
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Label(u32);
+
+impl Label {
+    pub fn ix(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for Label {
+    fn from(value: u32) -> Self {
+        Label(value)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Reg {

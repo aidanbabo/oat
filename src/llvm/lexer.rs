@@ -126,7 +126,7 @@ enum TokenData<'a> {
     Int(i64),
     String(usize),
     Id(ArenaIntern<'a, str>),
-    Ix(u32),
+    Lbl(crate::llvm::ast::Lbl),
     NoData,
 }
 
@@ -152,8 +152,8 @@ impl<'a> Token<'a> {
         let TokenData::Id(id) = self.data else { unreachable!("{self:?}") };
         id
     }
-    pub fn get_ix(&self) -> u32 {
-        let TokenData::Ix(id) = self.data else { unreachable!("{self:?}") };
+    pub fn get_lbl(&self) -> crate::llvm::ast::Lbl {
+        let TokenData::Lbl(id) = self.data else { unreachable!("{self:?}") };
         id
     }
 }
@@ -167,8 +167,8 @@ type CharIter<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 // todo: all interning in parser
 #[derive(Default)]
 pub struct Interners {
-    pub labels: StrInterner,
-    pub types: StrInterner,
+    pub labels: StrInterner<crate::llvm::ast::Lbl>,
+    pub types: StrInterner<crate::llvm::ast::Tid>,
 }
 
 pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<(Vec<Token<'a>>, Interners), LexerError> {
@@ -220,7 +220,7 @@ fn no_data(kind: TokenKind, start: usize) -> Token<'static> {
     Token { kind, start: start as u32, data: TokenData::NoData }
 }
 
-fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, lbl_int: &mut StrInterner) -> Result<Token<'a>, LexerError> {
+fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, lbl_int: &mut StrInterner<crate::llvm::ast::Lbl>) -> Result<Token<'a>, LexerError> {
     static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
         let mut m = HashMap::new();
         m.insert("i1", TokenKind::I1);
@@ -282,7 +282,7 @@ fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, lbl_
         Ok(Token {
             kind: TokenKind::Lbl,
             start: start as u32,
-            data: TokenData::Ix(lbl_int.intern(word)),
+            data: TokenData::Lbl(lbl_int.intern(word)),
         })
     }
 }

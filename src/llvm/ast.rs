@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use internment::ArenaIntern;
+use std::convert::From;
 
 // todo: change uid to an integer
 // this will involve using lookup tables to match to the string name
@@ -8,8 +9,38 @@ use internment::ArenaIntern;
 // reshuffle everything
 pub type Uid<'arena> = ArenaIntern<'arena, str>;
 pub type Gid<'arena> = ArenaIntern<'arena, str>;
-pub type Tid = u32;
-pub type Lbl = u32;
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Tid(u32);
+
+impl Tid {
+    pub fn ix(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for Tid {
+    fn from(value: u32) -> Self {
+        Tid(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Lbl(u32);
+
+impl Lbl {
+    pub fn ix(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for Lbl {
+    fn from(value: u32) -> Self {
+        Lbl(value)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ty {

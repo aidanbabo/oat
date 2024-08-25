@@ -13,6 +13,8 @@ use super::ast::*;
 #[error("{0}")]
 pub struct ParseError(String);
 
+// todo as this type gets bigger maybe it's a bad idea to pass it around all the time
+// function style :( or maybe we just box it :)
 struct Ctx<'a> {
     tokens: Vec<Token<'a>>,
     index: usize,
@@ -157,7 +159,7 @@ fn fdecl(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Fdecl<'_>)> {
         (ctx, lbl) = ctx.consume_token_of_kind(TokenKind::Lbl)?;
         (ctx, _) = ctx.consume_token_of_kind(TokenKind::Colon)?;
         (ctx, blk) = block(ctx)?;
-        blocks.push((lbl.get_ix(), blk));
+        blocks.push((lbl.get_lbl(), blk));
     }
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::RBrace)?;
 
