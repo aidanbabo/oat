@@ -6,13 +6,19 @@ use std::collections::HashMap;
 
 use internment::{Arena, ArenaIntern};
 
-use super::lexer::{lex, Token, TokenKind, Interners};
+use crate::StrInterner;
+use super::lexer::{lex, Token, TokenKind};
 use super::ast::*;
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ParseError(String);
 
+#[derive(Default)]
+struct Interners {
+    labels: StrInterner<Lbl>,
+    types: StrInterner<Tid>,
+}
 // todo as this type gets bigger maybe it's a bad idea to pass it around all the time
 // function style :( or maybe we just box it :)
 struct Ctx<'a> {
@@ -70,13 +76,13 @@ impl<'a> Ctx<'a> {
 type ParseResult<'a, T> = Result<(Ctx<'a>, T), ParseError>;
 
 pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseError> {
-    let (tokens, interners) = lex(input, arena).unwrap();
+    let tokens = lex(input, arena).unwrap();
     let mut ctx = Ctx {
         tokens,
         index: 0,
         arena,
         uuid_next: 0,
-        interners,
+        interners: Default::default(),
     };
 
     let mut fdecls = Vec::new();
@@ -86,7 +92,7 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
     while let Some(t) = ctx.token_offset(0) {
         match t.kind {
             TokenKind::Define => {
-                let (c, fdecl) = fdecl(ctx)?;
+                let (c, fdecl) = fdecl(ctx, input)?;
                 fdecls.push(fdecl);
                 ctx = c;
             },
@@ -136,7 +142,7 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
     })
 }
 
-fn fdecl(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Fdecl<'_>)> {
+fn fdecl<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, (Gid<'a>, Fdecl<'a>)> {
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Define)?;
     let (ctx, ty) = tipe(ctx)?;
 
@@ -159,7 +165,9 @@ fn fdecl(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Fdecl<'_>)> {
         (ctx, lbl) = ctx.consume_token_of_kind(TokenKind::Lbl)?;
         (ctx, _) = ctx.consume_token_of_kind(TokenKind::Colon)?;
         (ctx, blk) = block(ctx)?;
-        blocks.push((lbl.get_lbl(), blk));
+        let lbl_end = lbl.get_end();
+        let lbl_id = ctx.interners.labels.intern(&input[lbl.start as usize..lbl_end]);
+        blocks.push((lbl_id, blk));
     }
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::RBrace)?;
 

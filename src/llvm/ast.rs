@@ -159,6 +159,7 @@ pub struct LookupTables {
 
 #[derive(Debug, Default)]
 pub struct Prog<'a> {
+    // todo: make tdecls a vec!
     pub tdecls: HashMap<Tid, Ty>,
     pub gdecls: Vec<(Gid<'a>, Gdecl<'a>)>,
     pub fdecls: Vec<(Gid<'a>, Fdecl<'a>)>,
