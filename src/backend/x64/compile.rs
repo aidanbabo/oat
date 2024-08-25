@@ -10,7 +10,7 @@ type Layout<'ll> = HashMap<ll::Uid<'ll>, Op>;
 struct FunctionContext<'ll> {
     layout: Layout<'ll>,
     name: ll::Gid<'ll>,
-    tdecls: &'ll HashMap<ll::Uid<'ll>, ll::Ty<'ll>>,
+    tdecls: &'ll HashMap<ll::Tid, ll::Ty>,
     labels: &'ll Vec<Box<str>>,
 }
 
@@ -39,7 +39,7 @@ pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
             layout: stack_layout,
             name,
             tdecls: &ll.tdecls,
-            labels: &ll.labels,
+            labels: &ll.tables.labels,
         };
 
         let code_blocks = compile_function(fctx, arg_layout, &mut labels, fdecl);
@@ -258,7 +258,7 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, asm:
             /// this is the size as determined by llvmlite, so it's a little nonsensical
             /// this also means we are abi incompatible with code compiled via the --clang option,
             /// which is fine ig
-            fn size_ty<'ll>(fctx: &FunctionContext<'ll>, ty: &ll::Ty<'ll>) -> i64 {
+            fn size_ty(fctx: &FunctionContext<'_>, ty: &ll::Ty) -> i64 {
                 match ty {
                     ll::Ty::Void | ll::Ty::Fun(..) => panic!("undefined size, what the hell"),
                     ll::Ty::I8 => 1, // this should only ever happen in compiling ll files
@@ -269,7 +269,7 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, asm:
                 }
             }
 
-            fn index_into<'ll>(fctx: &FunctionContext<'ll>, ts: &[ll::Ty<'ll>], n: i64) -> i64 {
+            fn index_into(fctx: &FunctionContext<'_>, ts: &[ll::Ty], n: i64) -> i64 {
                 ts
                     .iter()
                     .take(n as usize)
@@ -277,7 +277,7 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner, asm:
                     .sum()
             }
 
-            fn path_through<'ll, 'asm>(asm: &mut CodeBlock, fctx: &FunctionContext<'ll>, labels: &mut StrInterner, curr_ty: ll::Ty<'ll>, p: ll::Operand<'ll>) -> ll::Ty<'ll> {
+            fn path_through<'ll>(asm: &mut CodeBlock, fctx: &FunctionContext<'ll>, labels: &mut StrInterner, curr_ty: ll::Ty, p: ll::Operand<'ll>) -> ll::Ty {
                 match curr_ty {
                     ll::Ty::Struct(mut ts) => {
                             let ll::Operand::Const(n) = p else { panic!("non-const op for struct index") };

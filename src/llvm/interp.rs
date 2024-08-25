@@ -15,22 +15,13 @@
 use internment::ArenaIntern;
 
 use std::collections::{HashMap, BTreeMap};
-use std::{fmt, ops};
+use std::ops;
 
 use super::ast;
 
-type Mid = i64; // memory block id
-type Fid = i64; // stack frame id
-type Idx = i64; // index
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Bid<'a> {
-    Global(ast::Gid<'a>),
-    Heap(Mid),
-    Stack(Fid),
-    Null,
-}
-
+/*
+ * on ice for now
+ 
 impl<'a> fmt::Display for Bid<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -42,27 +33,12 @@ impl<'a> fmt::Display for Bid<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
-struct Ptr<'a> {
-    ty: ast::Ty<'a>,
-    bid: Bid<'a>,
-    indices: Vec<Idx>, 
-}
-
 impl<'a> fmt::Display for Ptr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {} ", self.ty, self.bid)?;
         super::print::write_separated(f, ", ", &self.indices)?;
         Ok(())
     }
-}
-
-// stack value
-#[derive(Clone, Debug)]
-enum SVal<'a> {
-    Undef,
-    Int(i64),
-    Ptr(Ptr<'a>),
 }
 
 impl<'a> fmt::Display for SVal<'a> {
@@ -75,14 +51,6 @@ impl<'a> fmt::Display for SVal<'a> {
     }
 }
 
-// memory tree and value
-#[derive(Clone, Debug)]
-enum MTree<'a> {
-    Word(SVal<'a>),
-    Str(String),
-    Node(MVal<'a>),
-}
-
 impl<'a> fmt::Display for MTree<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -93,32 +61,11 @@ impl<'a> fmt::Display for MTree<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
-struct MVal<'a>(Vec<MTree<'a>>);
-
 impl<'a> fmt::Display for MVal<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         super::print::write_separated(f, " ", &self.0)?;
         write!(f, "]")
-    }
-}
-
-
-#[derive(Clone, Debug)]
-struct Locals<'a>(HashMap<ast::Uid<'a>, SVal<'a>>);
-
-impl<'a> ops::Deref for Locals<'a> {
-    type Target = HashMap<ast::Uid<'a>, SVal<'a>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'a> ops::DerefMut for Locals<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 
@@ -135,6 +82,63 @@ impl<'a> fmt::Display for Locals<'a> {
             first = false;
         }
         write!(f, "}}")
+    }
+}
+*/
+
+type Mid = i64; // memory block id
+type Fid = i64; // stack frame id
+type Idx = i64; // index
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Bid<'a> {
+    Global(ast::Gid<'a>),
+    Heap(Mid),
+    Stack(Fid),
+    Null,
+}
+
+#[derive(Clone, Debug)]
+struct Ptr<'a> {
+    ty: ast::Ty,
+    bid: Bid<'a>,
+    indices: Vec<Idx>, 
+}
+
+// stack value
+#[derive(Clone, Debug)]
+enum SVal<'a> {
+    Undef,
+    Int(i64),
+    Ptr(Ptr<'a>),
+}
+
+// memory tree and value
+#[derive(Clone, Debug)]
+enum MTree<'a> {
+    Word(SVal<'a>),
+    Str(String),
+    Node(MVal<'a>),
+}
+
+#[derive(Clone, Debug)]
+struct MVal<'a>(Vec<MTree<'a>>);
+
+
+#[derive(Clone, Debug)]
+struct Locals<'a>(HashMap<ast::Uid<'a>, SVal<'a>>);
+
+impl<'a> ops::Deref for Locals<'a> {
+    type Target = HashMap<ast::Uid<'a>, SVal<'a>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> ops::DerefMut for Locals<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -249,7 +253,7 @@ impl<'prog> Interpreter<'prog> {
         self.id
     }
 
-    fn effective_type(&self, t: &ast::Ty<'prog>) -> ast::Ty<'prog> {
+    fn effective_type(&self, t: &ast::Ty) -> ast::Ty {
         if let ast::Ty::Named(id) = t {
             self.effective_type(&self.prog.tdecls[id])
         } else {
@@ -404,7 +408,7 @@ impl<'prog> Interpreter<'prog> {
     }
 
     // Tag and GEP implementation
-    fn effective_tag(&self, p: &Ptr<'prog>) -> ast::Ty<'prog> {
+    fn effective_tag(&self, p: &Ptr<'prog>) -> ast::Ty {
         let mut idxs = p.indices.get(1..).expect("effective_tag: invalid pointer to missing first index");
         let mut tag = &p.ty;
         while !idxs.is_empty() {
@@ -436,8 +440,8 @@ impl<'prog> Interpreter<'prog> {
     }
 
     // direct port: this is so annoying looking :(
-    fn legal_gep(&self, sty: &ast::Ty<'prog>, tag: &ast::Ty<'prog>) -> bool {
-        fn ptrtoi8<'a>(named_types: &HashMap<ast::Tid<'a>, ast::Ty<'a>>, ty: &ast::Ty<'a>) -> ast::Ty<'a> {
+    fn legal_gep(&self, sty: &ast::Ty, tag: &ast::Ty) -> bool {
+        fn ptrtoi8(named_types: &HashMap<ast::Tid, ast::Ty>, ty: &ast::Ty) -> ast::Ty {
             match ty {
                 ast::Ty::Ptr(_) => ast::Ty::Ptr(Box::new(ast::Ty::I8)),
                 ast::Ty::Struct(ts) => ast::Ty::Struct(ts.iter().map(|t| ptrtoi8(named_types, t)).collect()),
@@ -446,7 +450,7 @@ impl<'prog> Interpreter<'prog> {
                 t => t.clone(),
             }
         }
-        fn flatten_ty<'a, 'p>(ty: &'a ast::Ty<'p>, b: &mut Vec<&'a ast::Ty<'p>>) {
+        fn flatten_ty<'a>(ty: &'a ast::Ty, b: &mut Vec<&'a ast::Ty>) {
             match ty {
                 ast::Ty::Struct(ts) => {
                     for t in ts {
@@ -471,7 +475,7 @@ impl<'prog> Interpreter<'prog> {
         Iterator::eq(styb.iter(), tagb.iter().take(styb.len()))
     }
 
-    fn gep_ptr(&self, ot: &ast::Ty<'prog>, p: &Ptr<'prog>, idxs: &[Idx]) -> SVal<'prog> {
+    fn gep_ptr(&self, ot: &ast::Ty, p: &Ptr<'prog>, idxs: &[Idx]) -> SVal<'prog> {
         if !self.legal_gep(ot, &self.effective_tag(p)) {
             return SVal::Undef;
         }
@@ -486,7 +490,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn interp_operand(&self, locals: &Locals<'prog>, ty: &ast::Ty<'prog>, o: ast::Operand<'prog>) -> SVal<'prog> {
+    fn interp_operand(&self, locals: &Locals<'prog>, ty: &ast::Ty, o: ast::Operand<'prog>) -> SVal<'prog> {
         match (ty, o) {
             (ast::Ty::I64, ast::Operand::Const(i)) |
             (ast::Ty::I1, ast::Operand::Const(i)) => SVal::Int(i),
@@ -506,7 +510,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn runtime_call(&mut self, ty: &ast::Ty<'prog>, func: ast::Gid<'prog>, args: &[SVal<'prog>]) -> Result<SVal<'prog>, ExecError> {
+    fn runtime_call(&mut self, ty: &ast::Ty, func: ast::Gid<'prog>, args: &[SVal<'prog>]) -> Result<SVal<'prog>, ExecError> {
         let load_strptr = |p: &Ptr| if let MTree::Str(s) = self.load_ptr(p)? {
             Ok(s)
         } else {
@@ -556,7 +560,7 @@ impl<'prog> Interpreter<'prog> {
         }
     }
 
-    fn interp_call(&mut self, ty: &ast::Ty<'prog>, func_name: ast::Gid<'prog>, args: &[SVal<'prog>]) -> Result<SVal<'prog>, ExecError> {
+    fn interp_call(&mut self, ty: &ast::Ty, func_name: ast::Gid<'prog>, args: &[SVal<'prog>]) -> Result<SVal<'prog>, ExecError> {
         if RUNTIME_FUNCTIONS.contains(&func_name.into_ref()) {
             return self.runtime_call(ty, func_name, args);
         }

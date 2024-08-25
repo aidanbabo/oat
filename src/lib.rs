@@ -39,7 +39,7 @@ impl StrInterner {
         self.insert(s.to_string().into_boxed_str())
     }
 
-    pub fn complete(self) -> (Vec<Box<str>>, HashMap<Box<str>, u32>) {
-        (self.pool, self.mapping)
+    pub fn complete(self) -> Vec<Box<str>> {
+        self.pool
     }
 }

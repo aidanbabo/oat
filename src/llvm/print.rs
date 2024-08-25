@@ -3,67 +3,54 @@ use std::fmt;
 use std::io;
 
 pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
-    write!(w, "{prog}")
+    write_prog(&mut w, &prog.tables, prog)
 }
 
-pub struct Separated<'a, T, U>(pub &'static str, pub &'a (T, U));
-
-impl<'a, T, U> fmt::Display for Separated<'a, T, U> 
-where T: fmt::Display,
-      U: fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}{}", self.1.0, self.0, self.1.1)
-    }
-}
-
-pub(crate) fn write_separated<T, W>(f: &mut W, sep: &str, ts: impl IntoIterator<Item = T>) -> fmt::Result
-    where T: fmt::Display,
-          W: fmt::Write,
+pub(crate) fn write_separated<T, W, I, F>(w: &mut W, tables: &LookupTables, sep: &str, ts: I, mut printer: F) -> io::Result<()> 
+    where W: io::Write,
+          I: IntoIterator<Item = T>,
+          F: FnMut(&mut W, &LookupTables, T) -> io::Result<()>,
 {
     let mut first = true;
     for t in ts {
         if first {
-            write!(f, "{t}")?
+            printer(w, tables, t)?;
         } else {
-            write!(f, "{sep}{t}")?
+            write!(w, "{sep}")?;
+            printer(w, tables, t)?;
         }
         first = false;
     }
     Ok(())
 }
 
-// This is to avoid allocating when printing pointers to types that we
-// create. E.g. load stores the pointee not pointer and we must create it.
-struct Ptr<T>(T);
-
-impl<T: fmt::Display> fmt::Display for Ptr<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}*", self.0)
-    }
-}
-
-impl<'a> fmt::Display for Ty<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Ty::Void => write!(f, "void"),
-            Ty::I1 => write!(f, "i1"),
-            Ty::I8 => write!(f, "i8"),
-            Ty::I64 => write!(f, "i64"),
-            Ty::Ptr(t) => write!(f, "{}", Ptr(t)),
-            Ty::Struct(ts) => { 
-                write!(f, "{{ ")?;
-                write_separated(f, ", ", ts)?;
-                write!(f, " }}")
-            }
-            Ty::Array(n, t) => write!(f, "[{n} x {t}]"),
-            Ty::Fun(ts, t) => {
-                write!(f, "{t} (")?;
-                write_separated(f, ", ", ts)?;
-                write!(f, ")")
-            }
-            Ty::Named(name) => write!(f, "%{name}"),
+fn write_ty<W: io::Write>(w: &mut W, tables: &LookupTables, ty: &Ty) -> io::Result<()> {
+    match ty {
+        Ty::Void => write!(w, "void"),
+        Ty::I1 => write!(w, "i1"),
+        Ty::I8 => write!(w, "i8"),
+        Ty::I64 => write!(w, "i64"),
+        Ty::Ptr(t) => {
+            write_ty(w, tables, t)?;
+            write!(w, "*")
         }
+        Ty::Struct(ts) => { 
+            write!(w, "{{ ")?;
+            write_separated(w, tables, ", ", ts, write_ty)?;
+            write!(w, " }}")
+        }
+        Ty::Array(n, t) => {
+            write!(w, "[{n} x ")?;
+            write_ty(w, tables, t)?;
+            write!(w, "]")
+        }
+        Ty::Fun(ts, t) => {
+            write_ty(w, tables, t)?;
+            write!(w, " (")?;
+            write_separated(w, tables, ", ", ts, write_ty)?;
+            write!(w, ")")
+        }
+        Ty::Named(id) => write!(w, "%{}", tables.types[*id as usize]),
     }
 }
 
@@ -107,148 +94,217 @@ impl fmt::Display for Cnd {
     }
 }
 
-impl<'a> fmt::Display for Insn<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Insn::Binop(b, t, o1, o2) => write!(f, "{b} {t} {o1}, {o2}"),
-            Insn::Alloca(t) => write!(f, "alloca {t}"),
-            Insn::Load(t, o) => write!(f, "load {t}, {} {o}", Ptr(t)),
-            Insn::Store(t, os, od) => write!(f, "store {t} {os}, {} {od}", Ptr(t)),
-            Insn::Icmp(c, t, o1, o2) => write!(f, "icmp {c} {t} {o1}, {o2}"),
-            Insn::Call(t, o, oa) => {
-                write!(f, "call {t} {o}(")?;
-                let mut first = true;
-                for (t, o) in oa {
-                    if first {
-                        write!(f, "{t} {o}")?
-                    } else {
-                        write!(f, ", {t} {o}")?
-                    }
-                    first = false;
+
+fn write_insn<W: io::Write>(w: &mut W, tables: &LookupTables, insn: &Insn<'_>) -> io::Result<()> {
+    match insn {
+        Insn::Binop(b, t, o1, o2) => {
+            write!(w, "{b} ")?;
+            write_ty(w, tables, t)?;
+            write!(w, " {o1}, {o2}")
+        }
+        Insn::Alloca(t) => {
+            write!(w, "alloca ")?;
+            write_ty(w, tables, t)
+        }
+        Insn::Load(t, o) => {
+            write!(w, "load ")?;
+            write_ty(w, tables, t)?;
+            write!(w, ", ")?;
+            write_ty(w, tables, t)?;
+            // added ptr
+            write!(w, "* {o}")
+        }
+        Insn::Store(t, os, od) => {
+            write!(w, "store ")?;
+            write_ty(w, tables, t)?;
+            write!(w, " {os}, ")?;
+            write_ty(w, tables, t)?;
+            // added ptr
+            write!(w, "* {od}")
+        }
+        Insn::Icmp(c, t, o1, o2) => {
+            write!(w, "icmp {c} ")?;
+            write_ty(w, tables, t)?;
+            write!(w, " {o1}, {o2}")
+        }
+        Insn::Call(t, o, oa) => {
+            write!(w, "call ")?;
+            write_ty(w, tables, t)?;
+            write!(w, " {o}(")?;
+            write_separated(w, tables, ", ", oa, |w, tables, (t, o)| {
+                write_ty(w, tables, t)?;
+                write!(w, " {o}")
+            })?;
+            write!(w, ")")
+        }
+        Insn::Bitcast(t1, o, t2) => {
+            write!(w, "bitcast ")?;
+            write_ty(w, tables, t1)?;
+            write!(w, " {o} to ")?;
+            write_ty(w, tables, t2)
+        }
+        Insn::Gep(t, o, oi) => {
+            write!(w, "getelementptr ")?;
+            write_ty(w, tables, t)?;
+            write!(w, ", ")?;
+            write_ty(w, tables, t)?;
+            // added ptr
+            write!(w, "* {o}")?;
+            for o in oi {
+                match o {
+                    Operand::Const(i) => write!(w, ", i32 {i}")?,
+                    o => write!(w, ", i64 {o}")?,
                 }
-                write!(f, ")")
             }
-            Insn::Bitcast(t1, o, t2) => write!(f, "bitcast {t1} {o} to {t2}"),
-            Insn::Gep(t, o, oi) => {
-                write!(f, "getelementptr {t}, {} {o}", Ptr(t))?;
-                for o in oi {
-                    match o {
-                        Operand::Const(i) => write!(f, ", i32 {i}")?,
-                        o => write!(f, ", i64 {o}")?,
-                    }
-                }
-                Ok(())
-            }
+            Ok(())
         }
     }
 }
 
-impl<'a> fmt::Display for Terminator<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Terminator::Ret(_, None) => write!(f, "ret void"),
-            Terminator::Ret(t, Some(o)) => write!(f, "ret {t} {o}"),
-            Terminator::Br(l) => write!(f, "br label %{l}"),
-            Terminator::Cbr(o, l, m) => write!(f, "br i1 {o}, label %{l}, label %{m}"),
+fn write_label<W: io::Write>(w: &mut W, tables: &LookupTables, lid: Lbl) -> io::Result<()> {
+    write!(w, "{}", tables.labels[lid as usize])
+}
+
+fn write_term<W: io::Write>(w: &mut W, tables: &LookupTables, term: &Terminator<'_>) -> io::Result<()> {
+    match term {
+        Terminator::Ret(_, None) => write!(w, "ret void"),
+        Terminator::Ret(t, Some(o)) => {
+            write!(w, "ret ")?;
+            write_ty(w, tables, t)?;
+            write!(w, " {o}")
+        }
+        Terminator::Br(l) => {
+            write!(w, "br label %")?;
+            write_label(w, tables, *l)
+        }
+        Terminator::Cbr(o, l, m) => {
+            write!(w, "br i1 {o}, label %")?;
+            write_label(w, tables, *l)?;
+            write!(w, ", label %")?;
+            write_label(w, tables, *m)
         }
     }
 }
 
-impl<'a> fmt::Display for Block<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (u, i) in &self.insns {
-            match i {
-                Insn::Store(_, _, _) | Insn::Call(Ty::Void, _, _) => write!(f, "\t")?,
-                _ => write!(f, "\t%{u} = ")?,
-            }
-            writeln!(f, "{i}")?;
+fn write_block<W: io::Write>(w: &mut W, tables: &LookupTables, block: &Block<'_>) -> io::Result<()> {
+    for (u, i) in &block.insns {
+        match i {
+            Insn::Store(_, _, _) | Insn::Call(Ty::Void, _, _) => write!(w, "\t")?,
+            _ => write!(w, "\t%{u} = ")?,
         }
-        write!(f, "\t{}", self.term.1)
+        write_insn(w, tables, i)?;
+        writeln!(w)?;
+    }
+    write!(w, "\t")?;
+    write_term(w, tables, &block.term.1)?;
+    writeln!(w)
+}
+
+fn write_cfg<W: io::Write>(w: &mut W, tables: &LookupTables, cfg: &Cfg<'_>) -> io::Result<()> {
+    write_block(w, tables, &cfg.entry)?;
+    for (label, b) in &cfg.blocks {
+        write_label(w, tables, *label)?;
+        writeln!(w, ":")?;
+        write_block(w, tables, b)?;
+    }
+    Ok(())
+}
+
+fn write_ginit<W: io::Write>(w: &mut W, tables: &LookupTables, ginit: &Ginit<'_>) -> io::Result<()> {
+    match ginit {
+        Ginit::Null => write!(w, "null"),
+        Ginit::Gid(g) => write!(w, "@{g}"),
+        Ginit::Int(i) => write!(w, "{i}"),
+        Ginit::String(s) => {
+            if s.ends_with('\0') {
+                write!(w, "c\"{s}\"")
+            } else {
+                write!(w, "c\"{s}\\00\"")
+            }
+        },
+        Ginit::Array(gis) => {
+            write!(w, "[")?;
+            write_separated(w, tables, ", ", gis, |w, tables, (t, init)| {
+                write_ty(w, tables, t)?;
+                write!(w, " ")?;
+                write_ginit(w, tables, init)
+            })?;
+            write!(w, "]")
+        }
+        Ginit::Struct(gis) => {
+            write!(w, "{{")?;
+            write_separated(w, tables, ", ", gis, |w, tables, (t, init)| {
+                write_ty(w, tables, t)?;
+                write!(w, " ")?;
+                write_ginit(w, tables, init)
+            })?;
+            write!(w, "}}")
+        }
+        Ginit::Bitcast(t1, g, t2) => {
+            write!(w, "bitcast (")?;
+            write_ty(w, tables, t1)?;
+            write!(w, " ")?;
+            write_ginit(w, tables, g)?;
+            write!(w, " to ")?;
+            write_ty(w, tables, t2)?;
+            write!(w, ")")
+        }
     }
 }
 
-impl<'a> fmt::Display for Cfg<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}", self.entry)?;
-        for (label, b) in &self.blocks {
-            writeln!(f, "{label}:")?;
-            writeln!(f, "{b}")?;
-        }
-        Ok(())
+fn write_prog<W: io::Write>(w: &mut W, tables: &LookupTables, prog: &Prog<'_>) -> io::Result<()> {
+    for (tid, t) in &prog.tdecls {
+        write!(w, "%{} = type ", tables.types[*tid as usize])?;
+        write_ty(w, tables,t)?;
+        writeln!(w)?;
     }
-}
+    if !prog.tdecls.is_empty() {
+        writeln!(w)?;
+    }
 
-impl<'a> fmt::Display for Ginit<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Ginit::Null => write!(f, "null"),
-            Ginit::Gid(g) => write!(f, "@{g}"),
-            Ginit::Int(i) => write!(f, "{i}"),
-            Ginit::String(s) => {
-                if s.ends_with('\0') {
-                    write!(f, "c\"{s}\"")
-                } else {
-                    write!(f, "c\"{s}\\00\"")
-                }
-            },
-            Ginit::Array(gis) => {
-                write!(f, "[")?;
-                write_separated(f, ", ", gis.iter().map(|t| Separated(" ", t)))?;
-                write!(f, "]")
+    for (gid, (ty, init)) in &prog.gdecls {
+        write!(w, "@{gid} = global ")?;
+        write_ty(w, tables, ty)?;
+        write!(w, " ")?;
+        write_ginit(w, tables, init)?;
+        writeln!(w)?;
+    }
+    if !prog.gdecls.is_empty() {
+        writeln!(w)?;
+    }
+
+    for (gid, fd) in &prog.fdecls {
+        write!(w, "define ")?;
+        write_ty(w, tables, &fd.ty.ret)?;
+        write!(w, " @{}(", gid)?;
+        write_separated(w, tables, ", ", fd.ty.params.iter().zip(fd.params.iter()), |w, tables, (t, o)| {
+            write_ty(w, tables, t)?;
+            write!(w, " %{o}")
+        })?;
+        writeln!(w, ") {{")?;
+        write_cfg(w, tables, &fd.cfg)?;
+        writeln!(w, "}}")?;
+    }
+    if !prog.fdecls.is_empty() {
+        writeln!(w)?;
+    }
+
+    for (g, t) in &prog.edecls {
+        match t {
+            Ty::Fun(ts, rt) => {
+                write!(w, "declare ")?;
+                write_ty(w, tables, rt)?;
+                write!(w, " @{g}(")?;
+                write_separated(w, tables, ", ", ts, write_ty)?;
+                writeln!(w, ")")?;
             }
-            Ginit::Struct(gis) => {
-                write!(f, "{{")?;
-                write_separated(f, ", ", gis.iter().map(|t| Separated(" ", t)))?;
-                write!(f, "}}")
+            _ => {
+                write!(w, "@{g} = external global ")?;
+                write_ty(w, tables, t)?;
+                writeln!(w)?;
             }
-            Ginit::Bitcast(t1, g, t2) => write!(f, "bitcast ({t1} {g} to {t2})"),
         }
     }
-}
 
-impl<'a> fmt::Display for Prog<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (u, t) in &self.tdecls {
-            writeln!(f, "%{u} = type {t}")?
-        }
-        if !self.tdecls.is_empty() {
-            writeln!(f)?;
-        }
-
-        for (gid, (ty, init)) in &self.gdecls {
-            writeln!(f, "@{gid} = global {ty} {init}")?;
-        }
-        if !self.gdecls.is_empty() {
-            writeln!(f)?;
-        }
-
-        for (u, fd) in &self.fdecls {
-            write!(f, "define {} @{}(", fd.ty.ret, u)?;
-            let mut first = true;
-            for (t, o) in fd.ty.params.iter().zip(fd.params.iter()) {
-                if !first {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{t} %{o}")?;
-                first = false;
-            }
-            write!(f, ") {{\n{}}}\n", fd.cfg)?;
-        }
-        if !self.fdecls.is_empty() {
-            writeln!(f)?;
-        }
-
-        for (g, t) in &self.edecls {
-            match t {
-                Ty::Fun(ts, rt) => {
-                    write!(f, "declare {rt} @{g}(")?;
-                    write_separated(f, ", ", ts)?;
-                    writeln!(f, ")")?;
-                }
-                _ => writeln!(f, "@{g} = external global {t}")?,
-            }
-        }
-
-        Ok(())
-    }
+    Ok(())
 }

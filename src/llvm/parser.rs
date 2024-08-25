@@ -6,25 +6,24 @@ use std::collections::HashMap;
 
 use internment::{Arena, ArenaIntern};
 
-use super::lexer::{lex, Token, TokenKind};
+use super::lexer::{lex, Token, TokenKind, Interners};
 use super::ast::*;
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ParseError(String);
 
-#[derive(Clone, Copy)]
-struct Ctx<'a, 'b> {
-    tokens: &'b [Token<'a>],
+struct Ctx<'a> {
+    tokens: Vec<Token<'a>>,
     index: usize,
     arena: &'a Arena<str>,
     uuid_next: usize,
-    label_ix_mapping: &'b HashMap<Box<str>, u32>,
+    interners: Interners,
 }
 
-impl<'a, 'b> Ctx<'a, 'b> {
-    fn token_offset(&self, offset: usize) -> Option<&'b Token<'a>> {
-        self.tokens.get(self.index + offset)
+impl<'a> Ctx<'a> {
+    fn token_offset(&self, offset: usize) -> Option<Token<'a>> {
+        self.tokens.get(self.index + offset).cloned()
     }
 
     #[must_use]
@@ -43,26 +42,22 @@ impl<'a, 'b> Ctx<'a, 'b> {
         }, sym)
     }
 
-    fn try_comsume_token_of_kind(self, kind: TokenKind) -> Result<(Self, &'b Token<'a>), Option<TokenKind>> {
+    fn try_consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, Token<'a>), (Self, Option<TokenKind>)> {
         if let Some(t) = self.token_offset(0) {
             if t.kind != kind {
-                Err(Some(t.kind))
+                Err((self, Some(t.kind)))
             } else {
                 Ok((self.advanced(1), t))
             }
         } else {
-            Err(None)
+            Err((self, None))
         }
     }
 
-    fn maybe_consume_token_of_kind(self, kind: TokenKind) -> Option<(Self, &'b Token<'a>)> {
-        self.try_comsume_token_of_kind(kind).ok()
-    }
-
-    fn consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, &'b Token<'a>), ParseError> {
+    fn consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, Token<'a>), ParseError> {
         self
-            .try_comsume_token_of_kind(kind)
-            .map_err(|k| if let Some(k) = k {
+            .try_consume_token_of_kind(kind)
+            .map_err(|k| if let Some(k) = k.1 {
                 ParseError(format!("Expected token of type {kind:?} but found token of kind {k:?}"))
             } else {
                 ParseError(format!("Expected token of type {kind:?} but found nothing"))
@@ -70,17 +65,16 @@ impl<'a, 'b> Ctx<'a, 'b> {
     }
 }
 
-type ParseResult<'a, 'b, T> = Result<(Ctx<'a, 'b>, T), ParseError>;
+type ParseResult<'a, T> = Result<(Ctx<'a>, T), ParseError>;
 
 pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseError> {
-    let (tokens, labels) = lex(input, arena).unwrap();
-    let (labels, lbl_ix_map) = labels.complete();
+    let (tokens, interners) = lex(input, arena).unwrap();
     let mut ctx = Ctx {
-        tokens: &tokens,
+        tokens,
         index: 0,
         arena,
         uuid_next: 0,
-        label_ix_mapping: &lbl_ix_map,
+        interners,
     };
 
     let mut fdecls = Vec::new();
@@ -109,7 +103,7 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
                     edecls.push((gid.get_id(), ty));
                     c
                 } else {
-                    let (c, ginit) = ginit(c)?;
+                    let (c, ginit) = ginit(c, input)?;
                     gdecls.push((gid.get_id(), (ty, ginit)));
                     c
                 };
@@ -133,11 +127,14 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
         gdecls,
         fdecls,
         edecls,
-        labels,
+        tables: LookupTables { 
+            labels: ctx.interners.labels.complete(),
+            types: ctx.interners.types.complete(),
+        }
     })
 }
 
-fn fdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>, Fdecl<'a>)> {
+fn fdecl(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Fdecl<'_>)> {
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Define)?;
     let (ctx, ty) = tipe(ctx)?;
 
@@ -178,7 +175,7 @@ fn fdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>,
     Ok((ctx, (gid.get_id(), fd)))
 }
 
-fn arglist<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Vec<(Ty<'a>, ArenaIntern<'a, str>)>> {
+fn arglist(ctx: Ctx<'_>) -> ParseResult<'_, Vec<(Ty, ArenaIntern<'_, str>)>> {
     token_separated(ctx, TokenKind::Comma, TokenKind::RParen, |ctx| {
         let (ctx, ty) = tipe(ctx)?;
         let (ctx, uid) = ctx.consume_token_of_kind(TokenKind::Uid)?;
@@ -186,7 +183,7 @@ fn arglist<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Vec<(Ty<'a>, ArenaIn
     })
 }
 
-fn entry_block<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
+fn entry_block(ctx: Ctx<'_>) -> ParseResult<'_, Block<'_>> {
     if ctx.token_offset(0).unwrap().kind == TokenKind::Entry && ctx.token_offset(1).unwrap().kind == TokenKind::Colon {
         block(ctx.advanced(2))
     } else {
@@ -194,14 +191,19 @@ fn entry_block<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
     }
 }
 
-fn block<'a, 'b>(mut ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
+fn block(mut ctx: Ctx<'_>) -> ParseResult<'_, Block<'_>> {
     let mut insns = Vec::new();
-    while let Some(res) = maybe_instruction(ctx) {
-        let uid;
-        let insn;
-        (ctx, (uid, insn)) = res?;
-        insns.push((uid, insn));
-    }
+    ctx = loop {
+        match maybe_instruction(ctx) {
+            Ok(res) => {
+                let uid;
+                let insn;
+                (ctx, (uid, insn)) = res?;
+                insns.push((uid, insn));
+            }
+            Err(c) => break c,
+        }
+    };
 
     let (ctx, term) = terminator(ctx)?;
     let (ctx, sym) = ctx.gensym("term");
@@ -211,16 +213,16 @@ fn block<'a, 'b>(mut ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
     }))
 }
 
-fn maybe_instruction<'a, 'b>(ctx: Ctx<'a, 'b>) -> Option<ParseResult<'a, 'b, (ArenaIntern<'a, str>, Insn<'a>)>> {
+fn maybe_instruction(ctx: Ctx<'_>) -> Result<ParseResult<'_, (ArenaIntern<'_, str>, Insn<'_>)>, Ctx<'_>> {
     if matches!(ctx.token_offset(0).map(|t| t.kind), Some(TokenKind::Uid) | Some(TokenKind::Store) | Some(TokenKind::Call)) {
-        Some(instruction(ctx))
+        Ok(instruction(ctx))
     } else {
-        None
+        Err(ctx)
     }
 
 }
 
-fn instruction<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>, Insn<'a>)> {
+fn instruction(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Insn<'_>)> {
     let Some(t0) = ctx.token_offset(0) else { 
         return Err(ParseError("expected a token to start instruction".to_string()));
     };
@@ -283,30 +285,33 @@ fn instruction<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a,
 
                     let mut os = Vec::new();
                     let mut first = true;
-                    loop {
+                    ctx = loop {
                         let found_ty = ctx
-                            .maybe_consume_token_of_kind(TokenKind::I32)
-                            .or_else(|| ctx.maybe_consume_token_of_kind(TokenKind::I64));
+                            .try_consume_token_of_kind(TokenKind::I32)
+                            .or_else(|(ctx, _)| ctx.try_consume_token_of_kind(TokenKind::I64));
                         // either empty, or there was just a comma!
-                        assert!(found_ty.is_some() || first);
+                        assert!(found_ty.is_ok() || first);
 
-                        ctx = if let Some((c, _ty)) = found_ty {
-                            let o;
-                            (ctx, o) = operand(c)?;
-                            os.push(o);
-                            ctx
-                        } else {
-                            break;
+                        ctx = match found_ty {
+                            Ok((c, _ty)) => {
+                                let o;
+                                (ctx, o) = operand(c)?;
+                                os.push(o);
+                                ctx
+                            }
+                            Err((c, _)) => {
+                                break c;
+                            }
                         };
 
                         if first {
                             first = false;
                         } 
-                        ctx = match ctx.maybe_consume_token_of_kind(TokenKind::Comma) {
-                            Some((c, _)) => c,
-                            None => break,
+                        ctx = match ctx.try_consume_token_of_kind(TokenKind::Comma) {
+                            Ok((c, _)) => c,
+                            Err((c, _)) => break c,
                         };
-                    }
+                    };
 
                     (uid, (ctx, Insn::Gep(ty, op, os)))
                 }
@@ -333,7 +338,7 @@ fn instruction<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a,
     }
 }
 
-fn call<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Insn<'a>> {
+fn call(ctx: Ctx<'_>) -> ParseResult<'_, Insn<'_>> {
     let (ctx, ty) = tipe(ctx)?;
     let (ctx, op) = operand(ctx)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::LParen)?;
@@ -346,7 +351,7 @@ fn call<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Insn<'a>> {
 
 }
 
-fn binop<'a, 'b>(ctx: Ctx<'a, 'b>, bop: Bop) -> ParseResult<'a, 'b, Insn<'a>> {
+fn binop(ctx: Ctx<'_>, bop: Bop) -> ParseResult<'_, Insn<'_>> {
     let (ctx, ty) = tipe(ctx)?;
     let (ctx, o1) = operand(ctx)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Comma)?;
@@ -354,22 +359,26 @@ fn binop<'a, 'b>(ctx: Ctx<'a, 'b>, bop: Bop) -> ParseResult<'a, 'b, Insn<'a>> {
     Ok((ctx, Insn::Binop(bop, ty, o1, o2)))
 }
 
-fn terminator<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Terminator<'a>> {
+fn terminator(ctx: Ctx<'_>) -> ParseResult<'_, Terminator<'_>> {
     match ctx.token_offset(0).unwrap().kind {
         TokenKind::Ret => {
             let (ctx, ty) = tipe(ctx.advanced(1))?;
-            let (ctx, op) = if let Ok((new_ctx, op)) = operand(ctx) {
-                (new_ctx, Some(op))
-            } else {
-                (ctx, None)
+            let (ctx, op) = match try_operand(ctx) {
+                Ok(res) => {
+                    let (new_ctx, op) = res.unwrap();
+                    (new_ctx, Some(op))
+                }
+                Err(ctx) => (ctx, None),
             };
             Ok((ctx, Terminator::Ret(ty, op)))
         }
         TokenKind::Br => {
             match ctx.token_offset(1).unwrap().kind {
                 TokenKind::Label => {
-                    let (ctx, lbl) = ctx.advanced(2).consume_token_of_kind(TokenKind::Uid)?;
-                    Ok((ctx, Terminator::Br(lbl.get_ix_from_id(ctx.label_ix_mapping))))
+                    let (mut ctx, lbl) = ctx.advanced(2).consume_token_of_kind(TokenKind::Uid)?;
+                    let lbl_id = ctx.interners.labels.intern(&lbl.get_id());
+                    let term = Terminator::Br(lbl_id); 
+                    Ok((ctx, term))
                 }
                 TokenKind::I1 => {
                     let (ctx, op) = operand(ctx.advanced(2))?;
@@ -379,9 +388,12 @@ fn terminator<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Terminator<'a>> {
 
                     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Comma)?;
                     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Label)?;
-                    let (ctx, lbl2) = ctx.consume_token_of_kind(TokenKind::Uid)?;
+                    let (mut ctx, lbl2) = ctx.consume_token_of_kind(TokenKind::Uid)?;
 
-                    Ok((ctx, Terminator::Cbr(op, lbl1.get_ix_from_id(ctx.label_ix_mapping), lbl2.get_ix_from_id(ctx.label_ix_mapping))))
+                    let lbl1_id = ctx.interners.labels.intern(&lbl1.get_id());
+                    let lbl2_id = ctx.interners.labels.intern(&lbl2.get_id());
+                    let term = Terminator::Cbr(op, lbl1_id, lbl2_id);
+                    Ok((ctx, term))
                 }
                 k => Err(ParseError(format!("invalid token after br: {k:?}"))),
             }
@@ -390,9 +402,9 @@ fn terminator<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Terminator<'a>> {
     }
 }
 
-fn tipe<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ty<'a>> {
+fn tipe(ctx: Ctx<'_>) -> ParseResult<'_, Ty> {
     let t = ctx.token_offset(0).unwrap();
-    let ctx = ctx.advanced(1);
+    let mut ctx = ctx.advanced(1);
     let (mut ctx, mut ty) = match t.kind {
         TokenKind::Void => (ctx, Ty::Void),
         TokenKind::I1 => (ctx, Ty::I1),
@@ -411,7 +423,8 @@ fn tipe<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ty<'a>> {
             (ctx, Ty::Array(len.get_int(), Box::new(nested_ty)))
         }
         TokenKind::Uid => {
-            (ctx, Ty::Named(t.get_id()))
+            let tid = ctx.interners.types.intern(&t.get_id());
+            (ctx, Ty::Named(tid))
         }
         k => return Err(ParseError(format!("unknown start token to type: {k:?}"))),
     };
@@ -434,7 +447,7 @@ fn tipe<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ty<'a>> {
     Ok((ctx, ty))
 }
 
-fn operand<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Operand<'a>> {
+fn operand(ctx: Ctx<'_>) -> ParseResult<'_, Operand<'_>> {
     let t = ctx.token_offset(0).unwrap();
     let op = match t.kind {
         TokenKind::Null => Operand::Null,
@@ -446,26 +459,40 @@ fn operand<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Operand<'a>> {
     Ok((ctx.advanced(1), op))
 }
 
-fn ginit<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ginit<'a>> {
+// todo: kinda stupid, no reuse
+// we luck out here since operands are only one token, this hack doesn't work generally
+fn try_operand(ctx: Ctx<'_>) -> Result<ParseResult<'_, Operand<'_>>, Ctx<'_>> {
+    let t = ctx.token_offset(0).unwrap();
+    let op = match t.kind {
+        TokenKind::Null => Operand::Null,
+        TokenKind::IntLit => Operand::Const(t.get_int()),
+        TokenKind::Uid => Operand::Id(t.get_id()),
+        TokenKind::Gid => Operand::Gid(t.get_id()),
+        _ => return Err(ctx),
+    };
+    Ok(Ok((ctx.advanced(1), op)))
+}
+
+fn ginit<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, Ginit<'a>> {
     let t = ctx.token_offset(0).unwrap();
     let ctx = ctx.advanced(1);
     let init = match t.kind {
         TokenKind::Null => (ctx, Ginit::Null),
         TokenKind::Gid => (ctx, Ginit::Gid(t.get_id())),
         TokenKind::IntLit => (ctx, Ginit::Int(t.get_int())),
-        TokenKind::StringLit => (ctx, Ginit::String(t.get_str().to_string())), // todo: ugh
+        TokenKind::StringLit => (ctx, Ginit::String(t.get_string(input))),
         TokenKind::LBracket => {
-            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBracket)?;
+            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBracket, input)?;
             (ctx, Ginit::Array(ginits))
         }
         TokenKind::LBrace => {
-            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBrace)?;
+            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBrace, input)?;
             (ctx, Ginit::Struct(ginits))
         }
         TokenKind::Bitcast => {
             let (ctx, _) = ctx.consume_token_of_kind(TokenKind::LParen)?;
             let (ctx, t1) = tipe(ctx)?;
-            let (ctx, g) = ginit(ctx)?;
+            let (ctx, g) = ginit(ctx, input)?;
             let (ctx, _) = ctx.consume_token_of_kind(TokenKind::To)?;
             let (ctx, t2) = tipe(ctx)?;
             let (ctx, _) = ctx.consume_token_of_kind(TokenKind::RParen)?;
@@ -476,23 +503,24 @@ fn ginit<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ginit<'a>> {
     Ok(init)
 }
 
-fn gdecl_list<'a, 'b>(ctx: Ctx<'a, 'b>, end_token: TokenKind) -> ParseResult<'a, 'b, Vec<(Ty<'a>, Ginit<'a>)>> {
+fn gdecl_list<'a>(ctx: Ctx<'a>, end_token: TokenKind, input: &str) -> ParseResult<'a, Vec<(Ty, Ginit<'a>)>> {
     token_separated(ctx, TokenKind::Comma, end_token, |ctx| {
         let (ctx, ty) = tipe(ctx)?;
-        let (ctx, gi) = ginit(ctx)?;
+        let (ctx, gi) = ginit(ctx, input)?;
         Ok((ctx, (ty, gi)))
     })
 }
 
-fn tdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>, Ty<'a>)> {
+fn tdecl(ctx: Ctx<'_>) -> ParseResult<'_, (Tid, Ty)> {
     let (ctx, uid) = ctx.consume_token_of_kind(TokenKind::Uid)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Equals)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Type)?;
-    let (ctx, ty) = tipe(ctx)?;
-    Ok((ctx, (uid.get_id(), ty)))
+    let (mut ctx, ty) = tipe(ctx)?;
+    let tid_ty = (ctx.interners.types.intern(&uid.get_id()), ty);
+    Ok((ctx, tid_ty))
 }
 
-fn edecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>, Ty<'a>)> {
+fn edecl(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Ty)> {
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Declare)?;
     let (ctx, rty) = tipe(ctx)?;
     let (ctx, gid) = ctx.consume_token_of_kind(TokenKind::Gid)?;
@@ -501,9 +529,9 @@ fn edecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>,
     Ok((ctx, (gid.get_id(), Ty::Fun(ts, Box::new(rty)))))
 }
 
-fn token_separated<'a, 'b, T, F>(mut ctx: Ctx<'a, 'b>, sep: TokenKind, end: TokenKind, mut fun: F) -> ParseResult<'a, 'b, Vec<T>>
+fn token_separated<'a, T, F>(mut ctx: Ctx<'a>, sep: TokenKind, end: TokenKind, mut fun: F) -> ParseResult<'a, Vec<T>>
 where
-    F: FnMut(Ctx<'a, 'b>) -> ParseResult<'a, 'b, T>
+    F: FnMut(Ctx<'a>) -> ParseResult<'a, T>
 {
     let mut list = Vec::new();
     let mut first = true;

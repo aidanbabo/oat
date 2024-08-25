@@ -8,27 +8,27 @@ use internment::ArenaIntern;
 // reshuffle everything
 pub type Uid<'arena> = ArenaIntern<'arena, str>;
 pub type Gid<'arena> = ArenaIntern<'arena, str>;
-pub type Tid<'arena> = ArenaIntern<'arena, str>;
+pub type Tid = u32;
 pub type Lbl = u32;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Ty<'a> {
+pub enum Ty {
     Void,
     I1,
     I8,
     I64,
-    Ptr(Box<Ty<'a>>),
-    Struct(Vec<Ty<'a>>),
-    Array(i64, Box<Ty<'a>>),
+    Ptr(Box<Ty>),
+    Struct(Vec<Ty>),
+    Array(i64, Box<Ty>),
     // strange redundancy with `FunTy` to avoid extra boxing
-    Fun(Vec<Ty<'a>>, Box<Ty<'a>>),
-    Named(Tid<'a>),
+    Fun(Vec<Ty>, Box<Ty>),
+    Named(Tid),
 }
 
 #[derive(Debug)]
-pub struct FunTy<'arena> {
-    pub params: Vec<Ty<'arena>>,
-    pub ret: Ty<'arena>,
+pub struct FunTy {
+    pub params: Vec<Ty>,
+    pub ret: Ty,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,24 +64,24 @@ pub enum Cnd {
 
 #[derive(Debug, PartialEq)]
 pub enum Insn<'a> {
-    Binop(Bop, Ty<'a>, Operand<'a>, Operand<'a>),
-    Alloca(Ty<'a>),
+    Binop(Bop, Ty, Operand<'a>, Operand<'a>),
+    Alloca(Ty),
     /// the type of the loaded value and then the operand to load from
-    Load(Ty<'a>, Operand<'a>),
+    Load(Ty, Operand<'a>),
     /// the type of the stored value, the value operand to store, and the location to store to
-    Store(Ty<'a>, Operand<'a>, Operand<'a>),
-    Icmp(Cnd, Ty<'a>, Operand<'a>, Operand<'a>),
-    Call(Ty<'a>, Operand<'a>, Vec<(Ty<'a>, Operand<'a>)>),
-    Bitcast(Ty<'a>, Operand<'a>, Ty<'a>),
+    Store(Ty, Operand<'a>, Operand<'a>),
+    Icmp(Cnd, Ty, Operand<'a>, Operand<'a>),
+    Call(Ty, Operand<'a>, Vec<(Ty, Operand<'a>)>),
+    Bitcast(Ty, Operand<'a>, Ty),
     /// the type pointed to, the value to index from, and the index values
-    Gep(Ty<'a>, Operand<'a>, Vec<Operand<'a>>),
+    Gep(Ty, Operand<'a>, Vec<Operand<'a>>),
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Terminator<'a> {
     /// return type and optional return value
     /// required if the return type is not void
-    Ret(Ty<'a>, Option<Operand<'a>>),
+    Ret(Ty, Option<Operand<'a>>),
     /// label to branch to
     Br(Lbl),
     /// the operand to branch on and then the true and false labels
@@ -102,7 +102,7 @@ pub struct Cfg<'a> {
 
 #[derive(Debug)]
 pub struct Fdecl<'a> {
-    pub ty: FunTy<'a>,
+    pub ty: FunTy,
     pub params: Vec<Uid<'a>>,
     pub cfg: Cfg<'a>,
 }
@@ -113,18 +113,24 @@ pub enum Ginit<'a> {
     Gid(Gid<'a>),
     Int(i64),
     String(String),
-    Array(Vec<(Ty<'a>, Ginit<'a>)>),
-    Struct(Vec<(Ty<'a>, Ginit<'a>)>),
-    Bitcast(Ty<'a>, Box<Ginit<'a>>, Ty<'a>),
+    Array(Vec<(Ty, Ginit<'a>)>),
+    Struct(Vec<(Ty, Ginit<'a>)>),
+    Bitcast(Ty, Box<Ginit<'a>>, Ty),
 }
 
-pub type Gdecl<'a> = (Ty<'a>, Ginit<'a>);
+pub type Gdecl<'a> = (Ty, Ginit<'a>);
+
+#[derive(Debug, Default)]
+pub struct LookupTables {
+    pub labels: Vec<Box<str>>,
+    pub types: Vec<Box<str>>,
+}
 
 #[derive(Debug, Default)]
 pub struct Prog<'a> {
-    pub tdecls: HashMap<Tid<'a>, Ty<'a>>,
+    pub tdecls: HashMap<Tid, Ty>,
     pub gdecls: Vec<(Gid<'a>, Gdecl<'a>)>,
     pub fdecls: Vec<(Gid<'a>, Fdecl<'a>)>,
-    pub edecls: Vec<(Gid<'a>, Ty<'a>)>,
-    pub labels: Vec<Box<str>>,
+    pub edecls: Vec<(Gid<'a>, Ty)>,
+    pub tables: LookupTables,
 }

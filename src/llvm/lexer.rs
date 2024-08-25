@@ -121,16 +121,16 @@ pub enum TokenKind {
 // todo: make this only an integer and use lookup tables for actual string names
 // (this would remove lifetimes, arenaintern (probably) and save space)
 // this would involve an ast level change, big boy breaking
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 enum TokenData<'a> {
     Int(i64),
-    String(Box<str>),
+    String(usize),
     Id(ArenaIntern<'a, str>),
     Ix(u32),
     NoData,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Token<'a> {
     pub kind: TokenKind,
     pub start: u32,
@@ -143,9 +143,10 @@ impl<'a> Token<'a> {
         i
     }
     // todo: uhhghghgh
-    pub fn get_str(&self) -> &str {
-        let TokenData::String(ref s) = self.data else { unreachable!("{self:?}") };
-        s
+    pub fn get_string(&self, input: &str) -> String {
+        let TokenData::String(start) = self.data else { unreachable!("{self:?}") };
+        // skip c at start of string lit
+        string_literal(&mut input[start+1..].char_indices().peekable(), start).unwrap().1
     }
     pub fn get_id(&self) -> ArenaIntern<'a, str> {
         let TokenData::Id(id) = self.data else { unreachable!("{self:?}") };
@@ -155,12 +156,6 @@ impl<'a> Token<'a> {
         let TokenData::Ix(id) = self.data else { unreachable!("{self:?}") };
         id
     }
-    pub fn get_ix_from_id(&self, map: &HashMap<Box<str>, u32>) -> u32 {
-        let TokenData::Id(id) = self.data else { unreachable!("{self:?}") };
-        *map
-            .get(&*id)
-            .unwrap_or_else(|| panic!("existing mapping for id: {id}"))
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -169,10 +164,17 @@ pub struct LexerError(String);
 
 type CharIter<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
-pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<(Vec<Token<'a>>, StrInterner), LexerError> {
+// todo: all interning in parser
+#[derive(Default)]
+pub struct Interners {
+    pub labels: StrInterner,
+    pub types: StrInterner,
+}
+
+pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<(Vec<Token<'a>>, Interners), LexerError> {
     let mut char_iter: CharIter<'_> = input.char_indices().peekable();
     let mut tokens = Vec::new();
-    let mut label_interner = StrInterner::default();
+    let mut interners = Interners::default();
 
     while let Some((ix, ch)) = char_iter.next() {
         let token = match ch {
@@ -197,21 +199,21 @@ pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<(Vec<Token<'a>>, St
             ']' => no_data(TokenKind::RBracket, ix),
             'c' => {
                 if char_iter.peek().is_some_and(|(_, c)| *c == '"') {
-                    string_literal(&mut char_iter, ix)?
+                    string_literal(&mut char_iter, ix)?.0
                 } else {
-                    keyword_or_label(&mut char_iter, input, ix, &mut label_interner)?
+                    keyword_or_label(&mut char_iter, input, ix, &mut interners.labels)?
                 }
             }
             '%' => ident(&mut char_iter, input, ix, arena, false)?,
             '@' => ident(&mut char_iter, input, ix, arena, true)?,
             '0'..='9' => digit(&mut char_iter, input, ix)?,
-            c if c.is_ascii_alphabetic() || c == '_' => keyword_or_label(&mut char_iter, input, ix, &mut label_interner)?,
+            c if c.is_ascii_alphabetic() || c == '_' => keyword_or_label(&mut char_iter, input, ix, &mut interners.labels)?,
             _ => return Err(LexerError(format!("unexpected character {ch}"))),
         };
         tokens.push(token);
     }
 
-    Ok((tokens, label_interner))
+    Ok((tokens, interners))
 }
 
 fn no_data(kind: TokenKind, start: usize) -> Token<'static> {
@@ -336,7 +338,7 @@ fn ident<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, arena: &'a Aren
 
 // should we add support for all hex escapes?
 // this means we may need to use Vec<u8> :(
-fn string_literal(iter: &mut CharIter<'_>, start: usize) -> Result<Token<'static>, LexerError> {
+fn string_literal(iter: &mut CharIter<'_>, start: usize) -> Result<(Token<'static>, String), LexerError> {
     assert!(matches!(iter.next(), Some((_, '"'))));
 
     let mut out = String::new();
@@ -359,9 +361,12 @@ fn string_literal(iter: &mut CharIter<'_>, start: usize) -> Result<Token<'static
         }
     }
 
-    Ok(Token {
-        kind: TokenKind::StringLit,
-        start: start as u32,
-        data: TokenData::String(out.into()),
-    })
+    Ok((
+        Token {
+            kind: TokenKind::StringLit,
+            start: start as u32,
+            data: TokenData::String(start),
+        }, 
+        out
+    ))
 }
