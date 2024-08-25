@@ -683,12 +683,12 @@ impl<'prog> Interpreter<'prog> {
                     return Ok(self.interp_operand(&locs, t, *o));
                 }
                 (_, ast::Terminator::Br(l)) => {
-                    &cfg.blocks.iter().find(|b| &*b.0 == l.into_ref()).expect("no block found with label").1
+                    &cfg.blocks.iter().find(|b| b.0 == *l).expect("no block found with label").1
                 }
                 (_, ast::Terminator::Cbr(o, l1, l2)) => {
                     let v = self.interp_operand(&locs, &ast::Ty::I1, *o);
                     let l = if Self::interp_i1(&v) { l1 } else { l2 };
-                    &cfg.blocks.iter().find(|b| &*b.0 == l.into_ref()).expect("no block found with label").1
+                    &cfg.blocks.iter().find(|b| b.0 == *l).expect("no block found with label").1
                 }
             }
         }

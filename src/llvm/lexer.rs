@@ -3,6 +3,8 @@ use once_cell::sync::Lazy;
 
 use std::collections::HashMap;
 
+use crate::StrInterner;
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
@@ -124,6 +126,7 @@ enum TokenData<'a> {
     Int(i64),
     String(Box<str>),
     Id(ArenaIntern<'a, str>),
+    Ix(u32),
     NoData,
 }
 
@@ -136,28 +139,40 @@ pub struct Token<'a> {
 
 impl<'a> Token<'a> {
     pub fn get_int(&self) -> i64 {
-        let TokenData::Int(i) = self.data else { unreachable!() };
+        let TokenData::Int(i) = self.data else { unreachable!("{self:?}") };
         i
     }
     // todo: uhhghghgh
     pub fn get_str(&self) -> &str {
-        let TokenData::String(ref s) = self.data else { unreachable!() };
+        let TokenData::String(ref s) = self.data else { unreachable!("{self:?}") };
         s
     }
     pub fn get_id(&self) -> ArenaIntern<'a, str> {
-        let TokenData::Id(id) = self.data else { unreachable!() };
+        let TokenData::Id(id) = self.data else { unreachable!("{self:?}") };
         id
+    }
+    pub fn get_ix(&self) -> u32 {
+        let TokenData::Ix(id) = self.data else { unreachable!("{self:?}") };
+        id
+    }
+    pub fn get_ix_from_id(&self, map: &HashMap<Box<str>, u32>) -> u32 {
+        let TokenData::Id(id) = self.data else { unreachable!("{self:?}") };
+        *map
+            .get(&*id)
+            .unwrap_or_else(|| panic!("existing mapping for id: {id}"))
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 pub struct LexerError(String);
 
 type CharIter<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
-pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<Vec<Token<'a>>, LexerError> {
+pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<(Vec<Token<'a>>, StrInterner), LexerError> {
     let mut char_iter: CharIter<'_> = input.char_indices().peekable();
     let mut tokens = Vec::new();
+    let mut label_interner = StrInterner::default();
 
     while let Some((ix, ch)) = char_iter.next() {
         let token = match ch {
@@ -184,26 +199,26 @@ pub fn lex<'a>(input: &str, arena: &'a Arena<str>) -> Result<Vec<Token<'a>>, Lex
                 if char_iter.peek().is_some_and(|(_, c)| *c == '"') {
                     string_literal(&mut char_iter, ix)?
                 } else {
-                    keyword_or_label(&mut char_iter, input, ix, arena)?
+                    keyword_or_label(&mut char_iter, input, ix, &mut label_interner)?
                 }
             }
             '%' => ident(&mut char_iter, input, ix, arena, false)?,
             '@' => ident(&mut char_iter, input, ix, arena, true)?,
             '0'..='9' => digit(&mut char_iter, input, ix)?,
-            c if c.is_ascii_alphabetic() || c == '_' => keyword_or_label(&mut char_iter, input, ix, arena)?,
+            c if c.is_ascii_alphabetic() || c == '_' => keyword_or_label(&mut char_iter, input, ix, &mut label_interner)?,
             _ => return Err(LexerError(format!("unexpected character {ch}"))),
         };
         tokens.push(token);
     }
 
-    Ok(tokens)
+    Ok((tokens, label_interner))
 }
 
 fn no_data(kind: TokenKind, start: usize) -> Token<'static> {
     Token { kind, start: start as u32, data: TokenData::NoData }
 }
 
-fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, arena: &'a Arena<str>) -> Result<Token<'a>, LexerError> {
+fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, lbl_int: &mut StrInterner) -> Result<Token<'a>, LexerError> {
     static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
         let mut m = HashMap::new();
         m.insert("i1", TokenKind::I1);
@@ -265,7 +280,7 @@ fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, aren
         Ok(Token {
             kind: TokenKind::Lbl,
             start: start as u32,
-            data: TokenData::Id(arena.intern(word)),
+            data: TokenData::Ix(lbl_int.intern(word)),
         })
     }
 }

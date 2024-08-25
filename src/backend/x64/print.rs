@@ -23,9 +23,9 @@ pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
 
 fn write_data_block<W: io::Write>(w: &mut W, labels: &[Box<str>], db: &DataBlock) -> io::Result<()> {
     if db.global {
-        writeln!(w, "\t.globl {}", labels[db.label])?;
+        writeln!(w, "\t.globl {}", labels[db.label as usize])?;
     }
-    writeln!(w, "{}:", labels[db.label])?;
+    writeln!(w, "{}:", labels[db.label as usize])?;
     for datum in &db.data {
         match datum {
             Data::Quad(imm) => {
@@ -48,9 +48,9 @@ fn write_data_block<W: io::Write>(w: &mut W, labels: &[Box<str>], db: &DataBlock
 
 fn write_code_block<W: io::Write>(w: &mut W, labels: &[Box<str>], cb: &CodeBlock) -> io::Result<()> {
     if cb.global {
-        writeln!(w, "\t.globl {}", labels[cb.label])?;
+        writeln!(w, "\t.globl {}", labels[cb.label as usize])?;
     }
-    writeln!(w, "{}:", labels[cb.label])?;
+    writeln!(w, "{}:", labels[cb.label as usize])?;
     for insn in &cb.insns {
         write!(w, "\t")?;
         write_insn(w, labels, insn)?;
@@ -174,7 +174,7 @@ fn write_op<W: io::Write>(w: &mut W, labels: &[Box<str>], op: Op) -> io::Result<
 fn write_imm<W: io::Write>(w: &mut W, labels: &[Box<str>], imm: Imm) -> io::Result<()> {
     match imm {
         Imm::Word(x) => write!(w, "{x}"),
-        Imm::Lbl(ix) => write!(w, "{}", labels[ix]),
+        Imm::Lbl(ix) => write!(w, "{}", labels[ix as usize]),
     }
 }
 

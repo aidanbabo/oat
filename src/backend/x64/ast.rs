@@ -1,5 +1,5 @@
 // index into Prog.labels
-pub type Label = usize;
+pub type Label = u32;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Reg {

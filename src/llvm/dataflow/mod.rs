@@ -155,7 +155,7 @@ struct Graph<'ast, 'fdecl, F> {
     /// map bbix -> [bbix], has a space at the end for the boundary block and at the start for the
     /// entry block
     block_preds: Vec<Vec<usize>>,
-    label_to_bbix: HashMap<ast::Lbl<'ast>, usize>,
+    label_to_bbix: HashMap<ast::Lbl, usize>,
     facts: HashMap<Node, F>,
 }
 

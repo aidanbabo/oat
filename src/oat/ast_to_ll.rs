@@ -7,10 +7,11 @@ use super::Node;
 use super::typechecker;
 use super::ast as oast;
 use crate::llvm::ast as llast;
+use crate::StrInterner;
 
 #[derive(Debug, Default, PartialEq)]
 struct PartialBlock<'a> {
-    label: Option<llast::Uid<'a>>, 
+    label: Option<llast::Lbl>, 
     insns: Vec<(llast::Uid<'a>, llast::Insn<'a>)>, 
     term: Option<(llast::Uid<'a>, llast::Terminator<'a>)>,
 }
@@ -24,8 +25,8 @@ struct FunContext<'oat, 'll> {
 }
 
 impl<'oat, 'll> FunContext<'oat, 'll> {
-    pub fn start_block(&mut self, name: llast::Uid<'ll>) {
-        self.current.label = Some(name);
+    pub fn start_block(&mut self, lbl: llast::Lbl) {
+        self.current.label = Some(lbl);
     }
 
     pub fn push_insn(&mut self, uid: llast::Uid<'ll>, insn: llast::Insn<'ll>) {
@@ -63,6 +64,11 @@ fn tipe<'ll>(arena: &'ll Arena<str>, ot: oast::Ty<'_>) -> llast::Ty<'ll> {
     }
 }
 
+// too much OOP: the constructor is FUCKED because i need a full context to call methods, but i
+// don't yet have one! fix this garbage!
+// ideas!: 
+//  - split out mutable and non-mutable data
+//  - split out data that outlives the context and data that is temporary
 pub struct Context<'oat, 'll> {
     llprog: llast::Prog<'ll>,
     globals: HashMap<oast::Ident<'oat>, (llast::Gid<'ll>, llast::Ty<'ll>)>,
@@ -75,6 +81,9 @@ pub struct Context<'oat, 'll> {
     // a more straightforward and maybe better way would be to add the struct name to the ast node
     // during typechecking, but since it's only this cutout we'll keep type info out of the ast
     ll_to_oat_structs: HashMap<llast::Tid<'ll>, oast::Ident<'oat>>,
+
+    // interners
+    label_interner: StrInterner,
 }
 
 impl<'oat, 'll> Context<'oat, 'll> {
@@ -85,17 +94,13 @@ impl<'oat, 'll> Context<'oat, 'll> {
         }).collect();
 
         let mut ctx = Context {
-            llprog: llast::Prog {
-                tdecls: Default::default(),
-                gdecls: Default::default(),
-                fdecls: Default::default(),
-                edecls: Default::default(),
-            },
+            llprog: llast::Prog::default(),
             globals: Default::default(),
             sym_num: 0,
             ll_to_oat_structs: structs.keys().map(|oname| (arena.intern(oname), *oname)).collect(),
             structs,
             arena,
+            label_interner: Default::default(),
         };
 
         ctx.llprog.edecls.push((arena.intern("oat_assert_array_length"), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
@@ -127,6 +132,8 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
         }
 
+        let (lbls, _) = self.label_interner.complete();
+        self.llprog.labels = lbls;
         self.llprog
     }
 
@@ -134,6 +141,12 @@ impl<'oat, 'll> Context<'oat, 'll> {
         let s = format!("{s}{}", self.sym_num);
         self.sym_num += 1;
         self.arena.intern_string(s)
+    }
+
+    fn genlbl(&mut self, s: &str) -> llast::Lbl {
+        let s = format!("{s}{}", self.sym_num);
+        self.sym_num += 1;
+        self.label_interner.intern_string(s)
     }
 
     fn gexp(&mut self, exp: oast::Exp<'oat>, name: String) -> (llast::Ty<'ll>, llast::Ginit<'ll>) {
@@ -221,7 +234,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             ret: ret_ty,
         };
 
-        let post_entry_lbl = self.arena.intern("post_entry");
+        let post_entry_lbl = self.label_interner.intern("post_entry");
 
         let mut fun_ctx = FunContext {
             cfg: llast::Cfg {
@@ -312,9 +325,9 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Stmt::If(cnd, if_blk, else_blk) => {
                 let (cnd_op, _ty) = self.exp(fun_ctx, cnd.t);
-                let then_lbl = self.gensym("then");
-                let else_lbl = self.gensym("else");
-                let after_lbl = self.gensym("after");
+                let then_lbl = self.genlbl("then");
+                let else_lbl = self.genlbl("else");
+                let after_lbl = self.genlbl("after");
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(cnd_op, then_lbl, else_lbl));
 
                 fun_ctx.start_block(then_lbl);
@@ -341,9 +354,9 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 let null_check = llast::Insn::Icmp(llast::Cnd::Ne, cnd_ty.clone(), cnd_op, llast::Operand::Null);
                 fun_ctx.push_insn(null_check_uid, null_check);
 
-                let then_lbl = self.gensym("then");
-                let else_lbl = self.gensym("else");
-                let after_lbl = self.gensym("after");
+                let then_lbl = self.genlbl("then");
+                let else_lbl = self.genlbl("else");
+                let after_lbl = self.genlbl("after");
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Cbr(llast::Operand::Id(null_check_uid), then_lbl, else_lbl));
 
                 fun_ctx.start_block(then_lbl);
@@ -374,10 +387,10 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Stmt::For(vdecls, cnd, update, blk) => {
                 // todo: infinite loop and return analysis buffs?
-                let for_top_lbl = self.gensym("for_top");
-                let for_body_lbl = self.gensym("for_body");
-                let for_update_lbl = self.gensym("for_update");
-                let for_after_lbl = self.gensym("after_for");
+                let for_top_lbl = self.genlbl("for_top");
+                let for_body_lbl = self.genlbl("for_body");
+                let for_update_lbl = self.genlbl("for_update");
+                let for_after_lbl = self.genlbl("after_for");
 
                 for vd in vdecls {
                     self.vdecl(fun_ctx, vd);
@@ -412,9 +425,9 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 false
             }
             oast::Stmt::While(cnd, blk) => {
-                let while_top_lbl = self.gensym("while_top");
-                let while_body_lbl = self.gensym("while_body");
-                let while_after_lbl = self.gensym("while_after");
+                let while_top_lbl = self.genlbl("while_top");
+                let while_body_lbl = self.genlbl("while_body");
+                let while_after_lbl = self.genlbl("while_after");
                 fun_ctx.terminate(self.gensym("_"), llast::Terminator::Br(while_top_lbl));
 
                 fun_ctx.start_block(while_top_lbl);
@@ -486,9 +499,9 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 let (len_op, _) = self.exp(fun_ctx, len.t);
                 let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, arr_el_ty.clone(), len_op);
 
-                let init_top_lbl = self.gensym("init_top");
-                let init_body_lbl = self.gensym("init_body");
-                let init_after_lbl = self.gensym("init_after");
+                let init_top_lbl = self.genlbl("init_top");
+                let init_body_lbl = self.genlbl("init_body");
+                let init_after_lbl = self.genlbl("init_after");
 
                 // set up index var
                 let ix_alloca_uid = self.gensym("init_ix_alloca");

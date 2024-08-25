@@ -9,7 +9,7 @@ use internment::ArenaIntern;
 pub type Uid<'arena> = ArenaIntern<'arena, str>;
 pub type Gid<'arena> = ArenaIntern<'arena, str>;
 pub type Tid<'arena> = ArenaIntern<'arena, str>;
-pub type Lbl<'arena> = ArenaIntern<'arena, str>;
+pub type Lbl = u32;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ty<'a> {
@@ -83,9 +83,9 @@ pub enum Terminator<'a> {
     /// required if the return type is not void
     Ret(Ty<'a>, Option<Operand<'a>>),
     /// label to branch to
-    Br(Lbl<'a>),
+    Br(Lbl),
     /// the operand to branch on and then the true and false labels
-    Cbr(Operand<'a>, Lbl<'a>, Lbl<'a>),
+    Cbr(Operand<'a>, Lbl, Lbl),
 }
 
 #[derive(Debug)]
@@ -97,7 +97,7 @@ pub struct Block<'a> {
 #[derive(Debug)]
 pub struct Cfg<'a> {
     pub entry: Block<'a>, 
-    pub blocks: Vec<(Lbl<'a>, Block<'a>)>,
+    pub blocks: Vec<(Lbl, Block<'a>)>,
 }
 
 #[derive(Debug)]
@@ -120,10 +120,11 @@ pub enum Ginit<'a> {
 
 pub type Gdecl<'a> = (Ty<'a>, Ginit<'a>);
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Prog<'a> {
     pub tdecls: HashMap<Tid<'a>, Ty<'a>>,
     pub gdecls: Vec<(Gid<'a>, Gdecl<'a>)>,
     pub fdecls: Vec<(Gid<'a>, Fdecl<'a>)>,
     pub edecls: Vec<(Gid<'a>, Ty<'a>)>,
+    pub labels: Vec<Box<str>>,
 }

@@ -9,7 +9,8 @@ use internment::{Arena, ArenaIntern};
 use super::lexer::{lex, Token, TokenKind};
 use super::ast::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{0}")]
 pub struct ParseError(String);
 
 #[derive(Clone, Copy)]
@@ -18,6 +19,7 @@ struct Ctx<'a, 'b> {
     index: usize,
     arena: &'a Arena<str>,
     uuid_next: usize,
+    label_ix_mapping: &'b HashMap<Box<str>, u32>,
 }
 
 impl<'a, 'b> Ctx<'a, 'b> {
@@ -71,15 +73,14 @@ impl<'a, 'b> Ctx<'a, 'b> {
 type ParseResult<'a, 'b, T> = Result<(Ctx<'a, 'b>, T), ParseError>;
 
 pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseError> {
-    let tokens = lex(input, arena).unwrap();
-    for t in &tokens {
-        println!("{t:?}");
-    }
+    let (tokens, labels) = lex(input, arena).unwrap();
+    let (labels, lbl_ix_map) = labels.complete();
     let mut ctx = Ctx {
         tokens: &tokens,
         index: 0,
         arena,
         uuid_next: 0,
+        label_ix_mapping: &lbl_ix_map,
     };
 
     let mut fdecls = Vec::new();
@@ -132,8 +133,8 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
         gdecls,
         fdecls,
         edecls,
+        labels,
     })
-
 }
 
 fn fdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>, Fdecl<'a>)> {
@@ -159,7 +160,7 @@ fn fdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>,
         (ctx, lbl) = ctx.consume_token_of_kind(TokenKind::Lbl)?;
         (ctx, _) = ctx.consume_token_of_kind(TokenKind::Colon)?;
         (ctx, blk) = block(ctx)?;
-        blocks.push((lbl.get_id(), blk));
+        blocks.push((lbl.get_ix(), blk));
     }
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::RBrace)?;
 
@@ -202,9 +203,7 @@ fn block<'a, 'b>(mut ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
         insns.push((uid, insn));
     }
 
-    println!("pre term spot: {:?}", ctx.token_offset(0));
     let (ctx, term) = terminator(ctx)?;
-    println!("post term spot: {:?}", ctx.token_offset(0));
     let (ctx, sym) = ctx.gensym("term");
     Ok((ctx, Block {
         insns,
@@ -370,7 +369,7 @@ fn terminator<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Terminator<'a>> {
             match ctx.token_offset(1).unwrap().kind {
                 TokenKind::Label => {
                     let (ctx, lbl) = ctx.advanced(2).consume_token_of_kind(TokenKind::Uid)?;
-                    Ok((ctx, Terminator::Br(lbl.get_id())))
+                    Ok((ctx, Terminator::Br(lbl.get_ix_from_id(ctx.label_ix_mapping))))
                 }
                 TokenKind::I1 => {
                     let (ctx, op) = operand(ctx.advanced(2))?;
@@ -382,7 +381,7 @@ fn terminator<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Terminator<'a>> {
                     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Label)?;
                     let (ctx, lbl2) = ctx.consume_token_of_kind(TokenKind::Uid)?;
 
-                    Ok((ctx, Terminator::Cbr(op, lbl1.get_id(), lbl2.get_id())))
+                    Ok((ctx, Terminator::Cbr(op, lbl1.get_ix_from_id(ctx.label_ix_mapping), lbl2.get_ix_from_id(ctx.label_ix_mapping))))
                 }
                 k => Err(ParseError(format!("invalid token after br: {k:?}"))),
             }
