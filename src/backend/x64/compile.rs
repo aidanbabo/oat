@@ -9,9 +9,10 @@ type Layout<'ll> = HashMap<ll::Uid<'ll>, Op>;
 
 struct FunctionContext<'ll> {
     layout: Layout<'ll>,
-    name: ll::Gid<'ll>,
+    name: ll::Gid,
     tdecls: &'ll HashMap<ll::Tid, ll::Ty>,
     labels: &'ll Vec<Box<str>>,
+    globals: &'ll Vec<Box<str>>,
 }
 
 pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
@@ -26,8 +27,8 @@ pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
     for (name, (_ty, ginit)) in ll.gdecls {
         let block = DataBlock {
             global: true,
-            label: make_global_label(&mut labels, &name),
-            data: compile_global(&mut labels, ginit),
+            label: make_global_label(&mut labels, &ll.tables.globals[name.ix()]),
+            data: compile_global(&mut labels, &ll.tables.globals, ginit),
         };
         p.data.push(block);
     }
@@ -40,6 +41,7 @@ pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
             name,
             tdecls: &ll.tdecls,
             labels: &ll.tables.labels,
+            globals: &ll.tables.globals,
         };
 
         let code_blocks = compile_function(fctx, arg_layout, &mut labels, fdecl);
@@ -54,7 +56,7 @@ fn make_global_label(labels: &mut StrInterner<Label>, s: &str) -> Label {
 }
 
 fn make_local_label(labels: &mut StrInterner<Label>, fctx: &FunctionContext<'_>, label_ix: ll::Lbl) -> Label {
-    let s = format!("{}.{}", &fctx.name, &fctx.labels[label_ix.ix()]);
+    let s = format!("{}.{}", &fctx.globals[fctx.name.ix()], &fctx.labels[label_ix.ix()]);
     make_label(labels, &s, false)
 }
 
@@ -67,14 +69,14 @@ fn make_label(labels: &mut StrInterner<Label>, s: &str, mangle: bool) -> Label {
     labels.intern_string(label)
 }
 
-fn compile_global(labels: &mut StrInterner<Label>, ginit: ll::Ginit<'_>) -> Vec<Data> {
+fn compile_global(labels: &mut StrInterner<Label>, globals: &[Box<str>], ginit: ll::Ginit) -> Vec<Data> {
     match ginit {
         ll::Ginit::Null => vec![Data::Quad(Imm::Word(0))],
-        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(make_global_label(labels, &gid)))],
+        ll::Ginit::Gid(gid) => vec![Data::Quad(Imm::Lbl(make_global_label(labels, &globals[gid.ix()])))],
         ll::Ginit::Int(i) => vec![Data::Quad(Imm::Word(i))],
         ll::Ginit::String(s) => vec![Data::String(s)],
-        ll::Ginit::Array(gs) | ll::Ginit::Struct(gs) => gs.into_iter().flat_map(|(_, g)| compile_global(labels, g)).collect(),
-        ll::Ginit::Bitcast(_, g, _) => compile_global(labels, *g),
+        ll::Ginit::Array(gs) | ll::Ginit::Struct(gs) => gs.into_iter().flat_map(|(_, g)| compile_global(labels, globals, g)).collect(),
+        ll::Ginit::Bitcast(_, g, _) => compile_global(labels, globals, *g),
     }
 }
 
@@ -83,7 +85,7 @@ fn compile_function<'ll>(fctx: FunctionContext<'ll>, arg_layout: Vec<(ll::Uid<'l
 
     let mut b1 = CodeBlock {
         global: true,
-        label: make_global_label(labels, &fctx.name),
+        label: make_global_label(labels, &fctx.globals[fctx.name.ix()]),
         insns: vec![
             Insn::Push(Op::Reg(Reg::Rbp)),
             Insn::Mov(Op::Reg(Reg::Rsp), Op::Reg(Reg::Rbp)),
@@ -238,7 +240,7 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label
             match fname {
                 ll::Operand::Gid(lbl) => {
                     // fastpath
-                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(make_global_label(labels, &lbl)))));
+                    asm.insns.push(Insn::Call(Op::Imm(Imm::Lbl(make_global_label(labels, &fctx.globals[lbl.ix()])))));
                 }
                 _ => {
                     asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), fname));
@@ -363,7 +365,7 @@ fn translate_op<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label
     match op {
         ll::Operand::Null => Op::Imm(Imm::Word(0)),
         ll::Operand::Const(c) => Op::Imm(Imm::Word(c)),
-        ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(make_global_label(labels, &gid)), Reg::Rip),
+        ll::Operand::Gid(gid) => Op::Ind3(Imm::Lbl(make_global_label(labels, &fctx.globals[gid.ix()])), Reg::Rip),
         ll::Operand::Id(uid) => fctx.layout[&uid],
     }
 }

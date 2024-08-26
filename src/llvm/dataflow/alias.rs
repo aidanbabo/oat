@@ -64,7 +64,8 @@ impl<'a> DataflowFact<'a> for Fact<'a> {
             ast::Insn::Call(_, _, args) => {
                 for (ty, op) in args {
                     // todo: no idea why Gids are included in here, try and remove?
-                    if let (ast::Ty::Ptr(..), ast::Operand::Id(id) | ast::Operand::Gid(id)) = (ty, op) {
+                    // removed Gids because of new interning, see if we should add it back?
+                    if let (ast::Ty::Ptr(..), ast::Operand::Id(id) /*| ast::Operand::Gid(id)*/) = (ty, op) {
                         self.0.insert(*id, Alias::May);
                     }
                 }

@@ -54,14 +54,12 @@ fn write_ty<W: io::Write>(w: &mut W, tables: &LookupTables, ty: &Ty) -> io::Resu
     }
 }
 
-impl<'a> fmt::Display for Operand<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Operand::Null => write!(f, "null"),
-            Operand::Const(x) => write!(f, "{x}"),
-            Operand::Gid(g) => write!(f, "@{g}"),
-            Operand::Id(u) => write!(f, "%{u}"),
-        }
+fn write_op<W: io::Write>(w: &mut W, tables: &LookupTables, op: &Operand<'_>) -> io::Result<()> {
+    match *op {
+        Operand::Null => write!(w, "null"),
+        Operand::Const(x) => write!(w, "{x}"),
+        Operand::Gid(g) => write!(w, "@{}", tables.globals[g.ix()]),
+        Operand::Id(u) => write!(w, "%{u}"),
     }
 }
 
@@ -100,7 +98,10 @@ fn write_insn<W: io::Write>(w: &mut W, tables: &LookupTables, insn: &Insn<'_>) -
         Insn::Binop(b, t, o1, o2) => {
             write!(w, "{b} ")?;
             write_ty(w, tables, t)?;
-            write!(w, " {o1}, {o2}")
+            write!(w, " ")?;
+            write_op(w, tables, o1)?;
+            write!(w, ", ")?;
+            write_op(w, tables, o2)
         }
         Insn::Alloca(t) => {
             write!(w, "alloca ")?;
@@ -112,35 +113,47 @@ fn write_insn<W: io::Write>(w: &mut W, tables: &LookupTables, insn: &Insn<'_>) -
             write!(w, ", ")?;
             write_ty(w, tables, t)?;
             // added ptr
-            write!(w, "* {o}")
+            write!(w, "* ")?;
+            write_op(w, tables, o)
         }
         Insn::Store(t, os, od) => {
             write!(w, "store ")?;
             write_ty(w, tables, t)?;
-            write!(w, " {os}, ")?;
+            write!(w, " ")?;
+            write_op(w, tables, os)?;
+            write!(w, ", ")?;
             write_ty(w, tables, t)?;
             // added ptr
-            write!(w, "* {od}")
+            write!(w, "* ")?;
+            write_op(w, tables, od)
         }
         Insn::Icmp(c, t, o1, o2) => {
             write!(w, "icmp {c} ")?;
             write_ty(w, tables, t)?;
-            write!(w, " {o1}, {o2}")
+            write!(w, " ")?;
+            write_op(w, tables, o1)?;
+            write!(w, ", ")?;
+            write_op(w, tables, o2)
         }
         Insn::Call(t, o, oa) => {
             write!(w, "call ")?;
             write_ty(w, tables, t)?;
-            write!(w, " {o}(")?;
+            write!(w, " ")?;
+            write_op(w, tables, o)?;
+            write!(w, "(")?;
             write_separated(w, tables, ", ", oa, |w, tables, (t, o)| {
                 write_ty(w, tables, t)?;
-                write!(w, " {o}")
+                write!(w, " ")?;
+                write_op(w, tables, o)
             })?;
             write!(w, ")")
         }
         Insn::Bitcast(t1, o, t2) => {
             write!(w, "bitcast ")?;
             write_ty(w, tables, t1)?;
-            write!(w, " {o} to ")?;
+            write!(w, " ")?;
+            write_op(w, tables, o)?;
+            write!(w, " to ")?;
             write_ty(w, tables, t2)
         }
         Insn::Gep(t, o, oi) => {
@@ -149,11 +162,15 @@ fn write_insn<W: io::Write>(w: &mut W, tables: &LookupTables, insn: &Insn<'_>) -
             write!(w, ", ")?;
             write_ty(w, tables, t)?;
             // added ptr
-            write!(w, "* {o}")?;
+            write!(w, "* ")?;
+            write_op(w, tables, o)?;
             for o in oi {
                 match o {
                     Operand::Const(i) => write!(w, ", i32 {i}")?,
-                    o => write!(w, ", i64 {o}")?,
+                    o => {
+                        write!(w, ", i64 ")?;
+                        write_op(w, tables, o)?;
+                    }
                 }
             }
             Ok(())
@@ -171,14 +188,17 @@ fn write_term<W: io::Write>(w: &mut W, tables: &LookupTables, term: &Terminator<
         Terminator::Ret(t, Some(o)) => {
             write!(w, "ret ")?;
             write_ty(w, tables, t)?;
-            write!(w, " {o}")
+            write!(w, " ")?;
+            write_op(w, tables, o)
         }
         Terminator::Br(l) => {
             write!(w, "br label %")?;
             write_label(w, tables, *l)
         }
         Terminator::Cbr(o, l, m) => {
-            write!(w, "br i1 {o}, label %")?;
+            write!(w, "br i1 ")?;
+            write_op(w, tables, o)?;
+            write!(w, ", label %")?;
             write_label(w, tables, *l)?;
             write!(w, ", label %")?;
             write_label(w, tables, *m)
@@ -210,10 +230,10 @@ fn write_cfg<W: io::Write>(w: &mut W, tables: &LookupTables, cfg: &Cfg<'_>) -> i
     Ok(())
 }
 
-fn write_ginit<W: io::Write>(w: &mut W, tables: &LookupTables, ginit: &Ginit<'_>) -> io::Result<()> {
+fn write_ginit<W: io::Write>(w: &mut W, tables: &LookupTables, ginit: &Ginit) -> io::Result<()> {
     match ginit {
         Ginit::Null => write!(w, "null"),
-        Ginit::Gid(g) => write!(w, "@{g}"),
+        Ginit::Gid(g) => write!(w, "@{}", tables.globals[g.ix()]),
         Ginit::Int(i) => write!(w, "{i}"),
         Ginit::String(s) => {
             if s.ends_with('\0') {
@@ -264,7 +284,7 @@ fn write_prog<W: io::Write>(w: &mut W, tables: &LookupTables, prog: &Prog<'_>) -
     }
 
     for (gid, (ty, init)) in &prog.gdecls {
-        write!(w, "@{gid} = global ")?;
+        write!(w, "@{} = global ", tables.globals[gid.ix()])?;
         write_ty(w, tables, ty)?;
         write!(w, " ")?;
         write_ginit(w, tables, init)?;
@@ -277,7 +297,7 @@ fn write_prog<W: io::Write>(w: &mut W, tables: &LookupTables, prog: &Prog<'_>) -
     for (gid, fd) in &prog.fdecls {
         write!(w, "define ")?;
         write_ty(w, tables, &fd.ty.ret)?;
-        write!(w, " @{}(", gid)?;
+        write!(w, " @{}(", tables.globals[gid.ix()])?;
         write_separated(w, tables, ", ", fd.ty.params.iter().zip(fd.params.iter()), |w, tables, (t, o)| {
             write_ty(w, tables, t)?;
             write!(w, " %{o}")
@@ -295,12 +315,12 @@ fn write_prog<W: io::Write>(w: &mut W, tables: &LookupTables, prog: &Prog<'_>) -
             Ty::Fun(ts, rt) => {
                 write!(w, "declare ")?;
                 write_ty(w, tables, rt)?;
-                write!(w, " @{g}(")?;
+                write!(w, " @{}(", tables.globals[g.ix()])?;
                 write_separated(w, tables, ", ", ts, write_ty)?;
                 writeln!(w, ")")?;
             }
             _ => {
-                write!(w, "@{g} = external global ")?;
+                write!(w, "@{} = external global ", tables.globals[g.ix()])?;
                 write_ty(w, tables, t)?;
                 writeln!(w)?;
             }

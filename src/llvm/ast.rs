@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use internment::ArenaIntern;
+
+use std::collections::HashMap;
 use std::convert::From;
 
 // todo: change uid to an integer
@@ -8,7 +9,22 @@ use std::convert::From;
 // a removal step and we'd need an "empty" instruction to allow analysis to go on without having to
 // reshuffle everything
 pub type Uid<'arena> = ArenaIntern<'arena, str>;
-pub type Gid<'arena> = ArenaIntern<'arena, str>;
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Gid(u32);
+
+impl Gid {
+    pub fn ix(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for Gid {
+    fn from(value: u32) -> Self {
+        Gid(value)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(transparent)]
@@ -66,7 +82,7 @@ pub struct FunTy {
 pub enum Operand<'arena> {
     Null,
     Const(i64),
-    Gid(Gid<'arena>),
+    Gid(Gid),
     Id(Uid<'arena>),
 }
 
@@ -139,30 +155,31 @@ pub struct Fdecl<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub enum Ginit<'a> {
+pub enum Ginit {
     Null,
-    Gid(Gid<'a>),
+    Gid(Gid),
     Int(i64),
     String(String),
-    Array(Vec<(Ty, Ginit<'a>)>),
-    Struct(Vec<(Ty, Ginit<'a>)>),
-    Bitcast(Ty, Box<Ginit<'a>>, Ty),
+    Array(Vec<(Ty, Ginit)>),
+    Struct(Vec<(Ty, Ginit)>),
+    Bitcast(Ty, Box<Ginit>, Ty),
 }
 
-pub type Gdecl<'a> = (Ty, Ginit<'a>);
+pub type Gdecl = (Ty, Ginit);
 
 #[derive(Debug, Default)]
 pub struct LookupTables {
     pub labels: Vec<Box<str>>,
     pub types: Vec<Box<str>>,
+    pub globals: Vec<Box<str>>,
 }
 
 #[derive(Debug, Default)]
 pub struct Prog<'a> {
     // todo: make tdecls a vec!
     pub tdecls: HashMap<Tid, Ty>,
-    pub gdecls: Vec<(Gid<'a>, Gdecl<'a>)>,
-    pub fdecls: Vec<(Gid<'a>, Fdecl<'a>)>,
-    pub edecls: Vec<(Gid<'a>, Ty)>,
+    pub gdecls: Vec<(Gid, Gdecl)>,
+    pub fdecls: Vec<(Gid, Fdecl<'a>)>,
+    pub edecls: Vec<(Gid, Ty)>,
     pub tables: LookupTables,
 }

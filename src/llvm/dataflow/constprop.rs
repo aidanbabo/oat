@@ -23,7 +23,8 @@ impl<'a> Fact<'a> {
         match o {
             ast::Operand::Null => Const::Undef,
             ast::Operand::Const(v) => Const::Yes(v),
-            ast::Operand::Gid(id) | ast::Operand::Id(id) => self.0.get(&id).copied().unwrap_or(Const::Undef)
+            ast::Operand::Gid(_id) => Const::Undef, // todo: match UID line
+            ast::Operand::Id(id) => self.0.get(&id).copied().unwrap_or(Const::Undef)
         }
     }
 }

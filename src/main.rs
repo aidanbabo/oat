@@ -176,8 +176,7 @@ fn main() {
     if args.interpret_ll {
         let start = Instant::now();
         let prog_args: Vec<_> = args.program_args.iter().map(|s| &**s).collect();
-        let entry = ll_arena.intern("main");
-        let r = oat::llvm::interp(&ll_prog, &prog_args, entry).unwrap();
+        let r = oat::llvm::interp(&ll_prog, &prog_args, "main").unwrap();
         timings.interpreting = Some(start.elapsed());
         println!("Interpreter Result: {r}");
         if args.timings {

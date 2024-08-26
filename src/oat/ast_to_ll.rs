@@ -7,6 +7,7 @@ use super::Node;
 use super::typechecker;
 use super::ast as oast;
 use crate::llvm::ast as llast;
+use crate::llvm::Interners;
 use crate::StrInterner;
 
 #[derive(Debug, Default, PartialEq)]
@@ -71,10 +72,9 @@ fn tipe(interner: &mut StrInterner<llast::Tid>, ot: oast::Ty<'_>) -> llast::Ty {
 //  - split out data that outlives the context and data that is temporary
 pub struct Context<'oat, 'll> {
     llprog: llast::Prog<'ll>,
-    globals: HashMap<oast::Ident<'oat>, (llast::Gid<'ll>, llast::Ty)>,
+    globals: HashMap<oast::Ident<'oat>, (llast::Gid, llast::Ty)>,
     structs: HashMap<oast::Ident<'oat>, Vec<(llast::Ty, oast::Ident<'oat>)>>,
     sym_num: usize,
-    arena: &'ll Arena<str>,
     // this is a hack just to get projections working, as they don't know the name of their own
     // struct
     // this is caused by the names for ll structs and oat structs to be in different arenas
@@ -82,17 +82,16 @@ pub struct Context<'oat, 'll> {
     // during typechecking, but since it's only this cutout we'll keep type info out of the ast
     ll_to_oat_structs: HashMap<llast::Tid, oast::Ident<'oat>>,
 
-    // interners
-    label_interner: StrInterner<llast::Lbl>,
-    type_interner: StrInterner<llast::Tid>,
+    arena: &'ll Arena<str>,
+    interners: Interners,
 }
 
 impl<'oat, 'll> Context<'oat, 'll> {
     pub fn new(tctx: typechecker::Context<'oat>, arena: &'ll Arena<str>, oat_arena: &'oat Arena<str>) -> Self {
 
-        let mut type_interner = StrInterner::default();
+        let mut interners = Interners::default();
         let structs: HashMap<_, _> = tctx.structs.into_iter().map(|(n, fs)| {
-            let pairs = fs.into_iter().map(|(ty, n)| (tipe(&mut type_interner, ty), n)).collect();
+            let pairs = fs.into_iter().map(|(ty, n)| (tipe(&mut interners.types, ty), n)).collect();
             (n, pairs)
         }).collect();
 
@@ -100,22 +99,21 @@ impl<'oat, 'll> Context<'oat, 'll> {
             llprog: llast::Prog::default(),
             globals: Default::default(),
             sym_num: 0,
-            ll_to_oat_structs: structs.keys().map(|oname| (type_interner.intern(oname), *oname)).collect(),
+            ll_to_oat_structs: structs.keys().map(|oname| (interners.types.intern(oname), *oname)).collect(),
             structs,
             arena,
-            label_interner: Default::default(),
-            type_interner,
+            interners,
         };
 
-        ctx.llprog.edecls.push((arena.intern("oat_assert_array_length"), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
-        ctx.llprog.edecls.push((arena.intern("oat_alloc_array"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
-        ctx.llprog.edecls.push((arena.intern("oat_malloc"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
+        ctx.llprog.edecls.push((ctx.interners.globals.intern("oat_assert_array_length"), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
+        ctx.llprog.edecls.push((ctx.interners.globals.intern("oat_alloc_array"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
+        ctx.llprog.edecls.push((ctx.interners.globals.intern("oat_malloc"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
         for (name, ty) in typechecker::BUILTINS.iter() {
-            let ty = tipe(&mut ctx.type_interner, ty.clone());
+            let ty = tipe(&mut ctx.interners.types, ty.clone());
             let llast::Ty::Ptr(ty) = ty else { unreachable!() };
-            let name = arena.intern(name);
-            ctx.llprog.edecls.push((name, (*ty).clone()));
-            ctx.globals.insert(oat_arena.intern(&name), (name, *ty));
+            let ll_name = ctx.interners.globals.intern(name);
+            ctx.llprog.edecls.push((ll_name, (*ty).clone()));
+            ctx.globals.insert(oat_arena.intern(&name), (ll_name, *ty));
         }
         
         ctx
@@ -136,10 +134,16 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
         }
 
-        let lbls = self.label_interner.complete();
-        self.llprog.tables.labels = lbls;
-        let types = self.type_interner.complete();
-        self.llprog.tables.types = types;
+        let Interners {
+            labels,
+            types,
+            globals,
+        } = self.interners;
+        self.llprog.tables = llast::LookupTables {
+            labels: labels.complete(),
+            types: types.complete(),
+            globals: globals.complete(),
+        };
         self.llprog
     }
 
@@ -152,12 +156,18 @@ impl<'oat, 'll> Context<'oat, 'll> {
     fn genlbl(&mut self, s: &str) -> llast::Lbl {
         let s = format!("{s}{}", self.sym_num);
         self.sym_num += 1;
-        self.label_interner.intern_string(s)
+        self.interners.labels.intern_string(s)
     }
 
-    fn gexp(&mut self, exp: oast::Exp<'oat>, name: String) -> (llast::Ty, llast::Ginit<'ll>) {
+    fn gengbl(&mut self, s: &str) -> llast::Gid {
+        let s = format!("{s}{}", self.sym_num);
+        self.sym_num += 1;
+        self.interners.globals.intern_string(s)
+    }
+
+    fn gexp(&mut self, exp: oast::Exp<'oat>, name: String) -> (llast::Ty, llast::Ginit) {
         let (ty, op) = match exp {
-            oast::Exp::Null(t) => (tipe(&mut self.type_interner, t), llast::Ginit::Null),
+            oast::Exp::Null(t) => (tipe(&mut self.interners.types, t), llast::Ginit::Null),
             oast::Exp::Bool(b) => (llast::Ty::I1, llast::Ginit::Int(b as i64)),
             oast::Exp::Int(i) => (llast::Ty::I64, llast::Ginit::Int(i)),
             oast::Exp::Str(s) => self.global_string(&name, s.to_string()),
@@ -168,17 +178,17 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 } else {
                     ty.clone()
                 };
-                (ty, llast::Ginit::Gid(self.arena.intern(&id)))
+                (ty, llast::Ginit::Gid(self.interners.globals.intern(&id)))
             }
             oast::Exp::ArrElems(ty, els) => {
                 let els: Vec<_> = els.into_iter().enumerate().map(|(i, e)| self.gexp(e.t, format!("{name}{i}"))).collect();
                 let array_len = els.len() as i64;
-                let elem_ty = tipe(&mut self.type_interner, ty);
+                let elem_ty = tipe(&mut self.interners.types, ty);
 
                 let tmp_ty = array_maker(elem_ty.clone(), array_len);
                 let new_ty = array_maker(elem_ty.clone(), 0);
 
-                let tmp_uid = self.gensym(&format!("{name}_tmp"));
+                let tmp_uid = self.gengbl(&format!("{name}_tmp"));
                 let tmp_ginit = llast::Ginit::Struct(vec![(llast::Ty::I64, llast::Ginit::Int(array_len)), (llast::Ty::Array(array_len, Box::new(elem_ty)), llast::Ginit::Array(els))]);
                 self.llprog.gdecls.push((tmp_uid, (tmp_ty.clone(), tmp_ginit)));
 
@@ -186,7 +196,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Exp::Struct(struct_name, mut inits) => {
                 let fields = self.structs[&struct_name].clone();
-                let struct_id = self.type_interner.intern(&struct_name);
+                let struct_id = self.interners.types.intern(&struct_name);
                 let struct_ty = llast::Ty::Named(struct_id);
                 let ginits = fields.iter().map(|(ty, name)| {
                     let found_ix = inits.iter().position(|(n, _)| n == name).expect("ensured by typechecker");
@@ -195,7 +205,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
                     (ty.clone(), init)
                 }).collect();
 
-                let struct_uid = self.gensym(&name);
+                let struct_uid = self.gengbl(&name);
                 self.llprog.gdecls.push((struct_uid, (struct_ty.clone(), llast::Ginit::Struct(ginits))));
                 let struct_ptr_ty = ptr_maker(struct_ty.clone());
                 (struct_ptr_ty, llast::Ginit::Gid(struct_uid))
@@ -207,15 +217,15 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
     fn global(&mut self, v: oast::Gdecl<'oat>) {
         let (ty, op) = self.gexp(v.init.t, v.name.to_string());
-        let interned = self.arena.intern(&v.name);
+        let interned = self.interners.globals.intern(&v.name);
         self.llprog.gdecls.push((interned, (ty.clone(), op)));
         assert!(self.globals.insert(v.name, (interned, ty)).is_none());
     }
 
-    fn global_string(&mut self, name: &str, mut s: String) -> (llast::Ty, llast::Ginit<'ll>) {
+    fn global_string(&mut self, name: &str, mut s: String) -> (llast::Ty, llast::Ginit) {
         // oat strings are nul-terminated
         s.push('\0');
-        let temp = self.gensym(&format!("{name}_tmp"));
+        let temp = self.gengbl(&format!("{name}_tmp"));
         let array_ty = llast::Ty::Array(s.len() as i64, Box::new(llast::Ty::I8));
         self.llprog.gdecls.push((temp, (array_ty.clone(), llast::Ginit::String(s))));
 
@@ -225,22 +235,22 @@ impl<'oat, 'll> Context<'oat, 'll> {
     }
 
     fn add_function_to_globals(&mut self, func: &oast::Fdecl<'oat>) {
-        let ret_ty = tipe(&mut self.type_interner, func.ret_ty.clone());
-        let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (tipe(&mut self.type_interner, t), n)).unzip();
+        let ret_ty = tipe(&mut self.interners.types, func.ret_ty.clone());
+        let (arg_tys, _): (Vec<_>, Vec<_>) = func.args.iter().cloned().map(|(t, n)| (tipe(&mut self.interners.types, t), n)).unzip();
 
         let ty_fun = llast::Ty::Fun(arg_tys, Box::new(ret_ty));
-        assert!(self.globals.insert(func.name, (self.arena.intern(&func.name), ty_fun)).is_none());
+        assert!(self.globals.insert(func.name, (self.interners.globals.intern(&func.name), ty_fun)).is_none());
     }
 
     fn function(&mut self, func: oast::Fdecl<'oat>) {
-        let ret_ty = tipe(&mut self.type_interner, func.ret_ty);
-        let (arg_tys, oat_names): (Vec<_>, Vec<_>) = func.args.into_iter().map(|(t, n)| (tipe(&mut self.type_interner, t), n)).unzip();
+        let ret_ty = tipe(&mut self.interners.types, func.ret_ty);
+        let (arg_tys, oat_names): (Vec<_>, Vec<_>) = func.args.into_iter().map(|(t, n)| (tipe(&mut self.interners.types, t), n)).unzip();
         let fun_ty = llast::FunTy {
             params: arg_tys,
             ret: ret_ty,
         };
 
-        let post_entry_lbl = self.label_interner.intern("post_entry");
+        let post_entry_lbl = self.interners.labels.intern("post_entry");
 
         let mut fun_ctx = FunContext {
             cfg: llast::Cfg {
@@ -279,7 +289,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             cfg: fun_ctx.cfg,
         };
 
-        self.llprog.fdecls.push((self.arena.intern(&func.name), fdecl));
+        self.llprog.fdecls.push((self.interners.globals.intern(&func.name), fdecl));
     }
 
     fn block(&mut self, fun_ctx: &mut FunContext<'oat, 'll>, body: oast::Block<'oat>) -> bool {
@@ -367,7 +377,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
                 fun_ctx.start_block(then_lbl);
 
-                let llty = tipe(&mut self.type_interner, ty);
+                let llty = tipe(&mut self.interners.types, ty);
                 let alloca_uid = self.gensym(&name);
                 fun_ctx.cfg.entry.insns.push((alloca_uid, llast::Insn::Alloca(llty.clone())));
                 fun_ctx.locals.insert(name, (alloca_uid, llty.clone()));
@@ -462,12 +472,14 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
     fn exp(&mut self, fun_ctx: &mut FunContext<'oat, 'll>, exp: oast::Exp<'oat>) -> (llast::Operand<'ll>, llast::Ty) {
         let (op, ty): (llast::Operand, llast::Ty) = match exp {
-            oast::Exp::Null(t) => (llast::Operand::Null, tipe(&mut self.type_interner, t)),
+            oast::Exp::Null(t) => (llast::Operand::Null, tipe(&mut self.interners.types, t)),
             oast::Exp::Bool(b) => (llast::Operand::Const(b as i64), llast::Ty::I1),
             oast::Exp::Int(n) => (llast::Operand::Const(n), llast::Ty::I64),
             oast::Exp::Str(s) => {
-                let gid = self.gensym("string");
-                let (ty, ginit) = self.global_string(&gid, s.to_string());
+                let gid = self.gengbl("string");
+                // fixme: don't use the literal "string" here but something more unique?
+                // is it even a bug?
+                let (ty, ginit) = self.global_string("string", s.to_string());
                 self.llprog.gdecls.push((gid, (ty.clone(), ginit)));
 
                 let ty = llast::Ty::Ptr(Box::new(llast::Ty::I8));
@@ -477,7 +489,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
                 (llast::Operand::Id(uid), ty)
             }
             oast::Exp::ArrElems(aty, els) => {
-                let arr_el_ty = tipe(&mut self.type_interner, aty);
+                let arr_el_ty = tipe(&mut self.interners.types, aty);
                 let (array_op, array_ty, array_base_ty) = self.oat_alloc_array(fun_ctx, arr_el_ty.clone(), llast::Operand::Const(els.len() as i64));
 
                 for (ix, el) in els.into_iter().enumerate() {
@@ -493,13 +505,13 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Exp::ArrLen(ty, len) => {
                 let (op, _) = self.exp(fun_ctx, len.t);
-                let ty = tipe(&mut self.type_interner, ty);
+                let ty = tipe(&mut self.interners.types, ty);
                 let (array_op, array_ty, _) = self.oat_alloc_array(fun_ctx, ty, op);
                 (array_op, array_ty)
             }
             oast::Exp::ArrInit(ty, len, name, init) => {
                 // todo: use phi nodes? might make code cleaner
-                let arr_el_ty = tipe(&mut self.type_interner, ty);
+                let arr_el_ty = tipe(&mut self.interners.types, ty);
 
                 // allocate array
                 let (len_op, _) = self.exp(fun_ctx, len.t);
@@ -556,7 +568,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             }
             oast::Exp::Struct(struct_name, mut inits) => {
                 let fields = self.structs[&struct_name].clone();
-                let struct_id = self.type_interner.intern(&struct_name);
+                let struct_id = self.interners.types.intern(&struct_name);
                 let struct_base_ty = llast::Ty::Named(struct_id);
                 let struct_ty = llast::Ty::Ptr(Box::new(struct_base_ty.clone()));
 
@@ -725,7 +737,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
     }
 
     fn call_internal(&mut self, fun_ctx: &mut FunContext<'oat, 'll>, name: &'static str, args: &[llast::Operand<'ll>]) -> (llast::Operand<'ll>, llast::Ty) {
-        let name = self.arena.intern(name);
+        let name = self.interners.globals.intern(name);
         let ret = self.gensym("ret");
         let (_, ty) = self.llprog.edecls.iter().find(|(n, _)| *n == name).expect("unknown builtin");
         let llast::Ty::Fun(arg_tys, ret_ty) = ty else { unreachable!() };
@@ -738,7 +750,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
 
     fn tipe_decl(&mut self, t: oast::Tdecl) {
         let fields = self.structs[&t.name].iter().map(|(t, _)| t).cloned().collect();
-        self.llprog.tdecls.insert(self.type_interner.intern(&t.name), llast::Ty::Struct(fields));
+        self.llprog.tdecls.insert(self.interners.types.intern(&t.name), llast::Ty::Struct(fields));
     }
 }
 

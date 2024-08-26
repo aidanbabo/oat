@@ -6,31 +6,27 @@ use std::collections::HashMap;
 
 use internment::{Arena, ArenaIntern};
 
-use crate::StrInterner;
 use super::lexer::{lex, Token, TokenKind};
 use super::ast::*;
+use super::Interners;
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ParseError(String);
 
-#[derive(Default)]
-struct Interners {
-    labels: StrInterner<Lbl>,
-    types: StrInterner<Tid>,
-}
 // todo as this type gets bigger maybe it's a bad idea to pass it around all the time
 // function style :( or maybe we just box it :)
-struct Ctx<'a> {
-    tokens: Vec<Token<'a>>,
+struct Ctx<'a, 'b> {
+    tokens: Vec<Token>,
     index: usize,
     arena: &'a Arena<str>,
     uuid_next: usize,
     interners: Interners,
+    input: &'b str,
 }
 
-impl<'a> Ctx<'a> {
-    fn token_offset(&self, offset: usize) -> Option<Token<'a>> {
+impl<'a, 'b> Ctx<'a, 'b> {
+    fn token_offset(&self, offset: usize) -> Option<Token> {
         self.tokens.get(self.index + offset).cloned()
     }
 
@@ -50,7 +46,7 @@ impl<'a> Ctx<'a> {
         }, sym)
     }
 
-    fn try_consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, Token<'a>), (Self, Option<TokenKind>)> {
+    fn try_consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, Token), (Self, Option<TokenKind>)> {
         if let Some(t) = self.token_offset(0) {
             if t.kind != kind {
                 Err((self, Some(t.kind)))
@@ -62,7 +58,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, Token<'a>), ParseError> {
+    fn consume_token_of_kind(self, kind: TokenKind) -> Result<(Self, Token), ParseError> {
         self
             .try_consume_token_of_kind(kind)
             .map_err(|k| if let Some(k) = k.1 {
@@ -73,31 +69,33 @@ impl<'a> Ctx<'a> {
     }
 }
 
-type ParseResult<'a, T> = Result<(Ctx<'a>, T), ParseError>;
+type ParseResult<'a, 'b, T> = Result<(Ctx<'a, 'b>, T), ParseError>;
 
-pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseError> {
-    let tokens = lex(input, arena).unwrap();
+pub fn parse<'a, 'b>(input: &'b str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseError> {
+    let tokens = lex(input).unwrap();
     let mut ctx = Ctx {
         tokens,
         index: 0,
         arena,
         uuid_next: 0,
         interners: Default::default(),
+        input,
     };
 
-    let mut fdecls = Vec::new();
+    let mut fdecls: Vec<(Gid, Fdecl<'a>)> = Vec::new();
     let mut gdecls = Vec::new();
     let mut tdecls = HashMap::new();
     let mut edecls = Vec::new();
     while let Some(t) = ctx.token_offset(0) {
         match t.kind {
             TokenKind::Define => {
-                let (c, fdecl) = fdecl(ctx, input)?;
+                let (c, fdecl) = fdecl(ctx)?;
                 fdecls.push(fdecl);
                 ctx = c;
             },
             TokenKind::Gid => {
-                let (c, gid) = ctx.consume_token_of_kind(TokenKind::Gid)?;
+                let (mut c, gid) = ctx.consume_token_of_kind(TokenKind::Gid)?;
+                let gid_id = c.interners.globals.intern(gid.get_id(c.input));
                 let (c, _) = c.consume_token_of_kind(TokenKind::Equals)?;
                 let (c, external) = if c.token_offset(0).map(|t| t.kind) == Some(TokenKind::External) {
                     (c.advanced(1), true)
@@ -108,11 +106,11 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
                 let (c, ty) = tipe(c)?;
 
                 ctx = if external {
-                    edecls.push((gid.get_id(), ty));
+                    edecls.push((gid_id, ty));
                     c
                 } else {
-                    let (c, ginit) = ginit(c, input)?;
-                    gdecls.push((gid.get_id(), (ty, ginit)));
+                    let (c, ginit) = ginit(c)?;
+                    gdecls.push((gid_id, (ty, ginit)));
                     c
                 };
             }
@@ -130,19 +128,21 @@ pub fn parse<'a>(input: &str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseEr
         }
     }
 
+    let Interners { labels, types, globals } = ctx.interners;
     Ok(Prog {
         tdecls,
         gdecls,
         fdecls,
         edecls,
         tables: LookupTables { 
-            labels: ctx.interners.labels.complete(),
-            types: ctx.interners.types.complete(),
+            labels: labels.complete(),
+            types: types.complete(),
+            globals: globals.complete(),
         }
     })
 }
 
-fn fdecl<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, (Gid<'a>, Fdecl<'a>)> {
+fn fdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (Gid, Fdecl<'a>)> {
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Define)?;
     let (ctx, ty) = tipe(ctx)?;
 
@@ -166,10 +166,10 @@ fn fdecl<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, (Gid<'a>, Fdecl<'a>)>
         (ctx, _) = ctx.consume_token_of_kind(TokenKind::Colon)?;
         (ctx, blk) = block(ctx)?;
         let lbl_end = lbl.get_end();
-        let lbl_id = ctx.interners.labels.intern(&input[lbl.start as usize..lbl_end]);
+        let lbl_id = ctx.interners.labels.intern(&ctx.input[lbl.start as usize..lbl_end]);
         blocks.push((lbl_id, blk));
     }
-    let (ctx, _) = ctx.consume_token_of_kind(TokenKind::RBrace)?;
+    let (mut ctx, _) = ctx.consume_token_of_kind(TokenKind::RBrace)?;
 
     let (ptys, pnames) = args.into_iter().unzip();
     let fd = Fdecl {
@@ -182,18 +182,20 @@ fn fdecl<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, (Gid<'a>, Fdecl<'a>)>
     };
 
 
-    Ok((ctx, (gid.get_id(), fd)))
+    let gid_id = ctx.interners.globals.intern(gid.get_id(ctx.input));
+    Ok((ctx, (gid_id, fd)))
 }
 
-fn arglist(ctx: Ctx<'_>) -> ParseResult<'_, Vec<(Ty, ArenaIntern<'_, str>)>> {
+fn arglist<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Vec<(Ty, Uid<'a>)>> {
     token_separated(ctx, TokenKind::Comma, TokenKind::RParen, |ctx| {
         let (ctx, ty) = tipe(ctx)?;
         let (ctx, uid) = ctx.consume_token_of_kind(TokenKind::Uid)?;
-        Ok((ctx, (ty, uid.get_id())))
+        let uid_id = ctx.arena.intern(uid.get_id(ctx.input));
+        Ok((ctx, (ty, uid_id)))
     })
 }
 
-fn entry_block(ctx: Ctx<'_>) -> ParseResult<'_, Block<'_>> {
+fn entry_block<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
     if ctx.token_offset(0).unwrap().kind == TokenKind::Entry && ctx.token_offset(1).unwrap().kind == TokenKind::Colon {
         block(ctx.advanced(2))
     } else {
@@ -201,7 +203,7 @@ fn entry_block(ctx: Ctx<'_>) -> ParseResult<'_, Block<'_>> {
     }
 }
 
-fn block(mut ctx: Ctx<'_>) -> ParseResult<'_, Block<'_>> {
+fn block<'a, 'b>(mut ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Block<'a>> {
     let mut insns = Vec::new();
     ctx = loop {
         match maybe_instruction(ctx) {
@@ -223,7 +225,7 @@ fn block(mut ctx: Ctx<'_>) -> ParseResult<'_, Block<'_>> {
     }))
 }
 
-fn maybe_instruction(ctx: Ctx<'_>) -> Result<ParseResult<'_, (ArenaIntern<'_, str>, Insn<'_>)>, Ctx<'_>> {
+fn maybe_instruction<'a, 'b>(ctx: Ctx<'a, 'b>) -> Result<ParseResult<'a, 'b, (ArenaIntern<'a, str>, Insn<'a>)>, Ctx<'a, 'b>> {
     if matches!(ctx.token_offset(0).map(|t| t.kind), Some(TokenKind::Uid) | Some(TokenKind::Store) | Some(TokenKind::Call)) {
         Ok(instruction(ctx))
     } else {
@@ -232,14 +234,14 @@ fn maybe_instruction(ctx: Ctx<'_>) -> Result<ParseResult<'_, (ArenaIntern<'_, st
 
 }
 
-fn instruction(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Insn<'_>)> {
+fn instruction<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (ArenaIntern<'a, str>, Insn<'a>)> {
     let Some(t0) = ctx.token_offset(0) else { 
         return Err(ParseError("expected a token to start instruction".to_string()));
     };
 
     match t0.kind {
         TokenKind::Uid => {
-            let uid = t0.get_id();
+            let uid = ctx.arena.intern(t0.get_id(ctx.input));
             let (ctx, _) = ctx.advanced(1).consume_token_of_kind(TokenKind::Equals)?;
             // todo: silly looking
             let (uid, (ctx, insn)) = match ctx.token_offset(0).unwrap().kind {
@@ -348,7 +350,7 @@ fn instruction(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Insn<'_>)
     }
 }
 
-fn call(ctx: Ctx<'_>) -> ParseResult<'_, Insn<'_>> {
+fn call<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Insn<'a>> {
     let (ctx, ty) = tipe(ctx)?;
     let (ctx, op) = operand(ctx)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::LParen)?;
@@ -361,7 +363,7 @@ fn call(ctx: Ctx<'_>) -> ParseResult<'_, Insn<'_>> {
 
 }
 
-fn binop(ctx: Ctx<'_>, bop: Bop) -> ParseResult<'_, Insn<'_>> {
+fn binop<'a, 'b>(ctx: Ctx<'a, 'b>, bop: Bop) -> ParseResult<'a, 'b, Insn<'a>> {
     let (ctx, ty) = tipe(ctx)?;
     let (ctx, o1) = operand(ctx)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Comma)?;
@@ -369,7 +371,7 @@ fn binop(ctx: Ctx<'_>, bop: Bop) -> ParseResult<'_, Insn<'_>> {
     Ok((ctx, Insn::Binop(bop, ty, o1, o2)))
 }
 
-fn terminator(ctx: Ctx<'_>) -> ParseResult<'_, Terminator<'_>> {
+fn terminator<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Terminator<'a>> {
     match ctx.token_offset(0).unwrap().kind {
         TokenKind::Ret => {
             let (ctx, ty) = tipe(ctx.advanced(1))?;
@@ -386,7 +388,7 @@ fn terminator(ctx: Ctx<'_>) -> ParseResult<'_, Terminator<'_>> {
             match ctx.token_offset(1).unwrap().kind {
                 TokenKind::Label => {
                     let (mut ctx, lbl) = ctx.advanced(2).consume_token_of_kind(TokenKind::Uid)?;
-                    let lbl_id = ctx.interners.labels.intern(&lbl.get_id());
+                    let lbl_id = ctx.interners.labels.intern(lbl.get_id(ctx.input));
                     let term = Terminator::Br(lbl_id); 
                     Ok((ctx, term))
                 }
@@ -400,8 +402,8 @@ fn terminator(ctx: Ctx<'_>) -> ParseResult<'_, Terminator<'_>> {
                     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Label)?;
                     let (mut ctx, lbl2) = ctx.consume_token_of_kind(TokenKind::Uid)?;
 
-                    let lbl1_id = ctx.interners.labels.intern(&lbl1.get_id());
-                    let lbl2_id = ctx.interners.labels.intern(&lbl2.get_id());
+                    let lbl1_id = ctx.interners.labels.intern(lbl1.get_id(ctx.input));
+                    let lbl2_id = ctx.interners.labels.intern(lbl2.get_id(ctx.input));
                     let term = Terminator::Cbr(op, lbl1_id, lbl2_id);
                     Ok((ctx, term))
                 }
@@ -412,7 +414,7 @@ fn terminator(ctx: Ctx<'_>) -> ParseResult<'_, Terminator<'_>> {
     }
 }
 
-fn tipe(ctx: Ctx<'_>) -> ParseResult<'_, Ty> {
+fn tipe<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ty> {
     let t = ctx.token_offset(0).unwrap();
     let mut ctx = ctx.advanced(1);
     let (mut ctx, mut ty) = match t.kind {
@@ -433,7 +435,7 @@ fn tipe(ctx: Ctx<'_>) -> ParseResult<'_, Ty> {
             (ctx, Ty::Array(len.get_int(), Box::new(nested_ty)))
         }
         TokenKind::Uid => {
-            let tid = ctx.interners.types.intern(&t.get_id());
+            let tid = ctx.interners.types.intern(t.get_id(ctx.input));
             (ctx, Ty::Named(tid))
         }
         k => return Err(ParseError(format!("unknown start token to type: {k:?}"))),
@@ -457,13 +459,13 @@ fn tipe(ctx: Ctx<'_>) -> ParseResult<'_, Ty> {
     Ok((ctx, ty))
 }
 
-fn operand(ctx: Ctx<'_>) -> ParseResult<'_, Operand<'_>> {
+fn operand<'a, 'b>(mut ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Operand<'a>> {
     let t = ctx.token_offset(0).unwrap();
     let op = match t.kind {
         TokenKind::Null => Operand::Null,
         TokenKind::IntLit => Operand::Const(t.get_int()),
-        TokenKind::Uid => Operand::Id(t.get_id()),
-        TokenKind::Gid => Operand::Gid(t.get_id()),
+        TokenKind::Uid => Operand::Id(ctx.arena.intern(t.get_id(ctx.input))),
+        TokenKind::Gid => Operand::Gid(ctx.interners.globals.intern(t.get_id(ctx.input))),
         k => return Err(ParseError(format!("unknown start to operator {k:?}"))),
     };
     Ok((ctx.advanced(1), op))
@@ -471,38 +473,44 @@ fn operand(ctx: Ctx<'_>) -> ParseResult<'_, Operand<'_>> {
 
 // todo: kinda stupid, no reuse
 // we luck out here since operands are only one token, this hack doesn't work generally
-fn try_operand(ctx: Ctx<'_>) -> Result<ParseResult<'_, Operand<'_>>, Ctx<'_>> {
+fn try_operand<'a, 'b>(mut ctx: Ctx<'a, 'b>) -> Result<ParseResult<'a, 'b, Operand<'a>>, Ctx<'a, 'b>> {
     let t = ctx.token_offset(0).unwrap();
     let op = match t.kind {
         TokenKind::Null => Operand::Null,
         TokenKind::IntLit => Operand::Const(t.get_int()),
-        TokenKind::Uid => Operand::Id(t.get_id()),
-        TokenKind::Gid => Operand::Gid(t.get_id()),
+        TokenKind::Uid => Operand::Id(ctx.arena.intern(t.get_id(ctx.input))),
+        TokenKind::Gid => Operand::Gid(ctx.interners.globals.intern(t.get_id(ctx.input))),
         _ => return Err(ctx),
     };
     Ok(Ok((ctx.advanced(1), op)))
 }
 
-fn ginit<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, Ginit<'a>> {
+fn ginit<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, Ginit> {
     let t = ctx.token_offset(0).unwrap();
-    let ctx = ctx.advanced(1);
+    let mut ctx = ctx.advanced(1);
     let init = match t.kind {
         TokenKind::Null => (ctx, Ginit::Null),
-        TokenKind::Gid => (ctx, Ginit::Gid(t.get_id())),
+        TokenKind::Gid => {
+            let gid = ctx.interners.globals.intern(t.get_id(ctx.input));
+            (ctx, Ginit::Gid(gid))
+        },
         TokenKind::IntLit => (ctx, Ginit::Int(t.get_int())),
-        TokenKind::StringLit => (ctx, Ginit::String(t.get_string(input))),
+        TokenKind::StringLit => {
+            let s = t.get_string(ctx.input);
+            (ctx, Ginit::String(s))
+        }
         TokenKind::LBracket => {
-            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBracket, input)?;
+            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBracket)?;
             (ctx, Ginit::Array(ginits))
         }
         TokenKind::LBrace => {
-            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBrace, input)?;
+            let (ctx, ginits) = gdecl_list(ctx, TokenKind::RBrace)?;
             (ctx, Ginit::Struct(ginits))
         }
         TokenKind::Bitcast => {
             let (ctx, _) = ctx.consume_token_of_kind(TokenKind::LParen)?;
             let (ctx, t1) = tipe(ctx)?;
-            let (ctx, g) = ginit(ctx, input)?;
+            let (ctx, g) = ginit(ctx)?;
             let (ctx, _) = ctx.consume_token_of_kind(TokenKind::To)?;
             let (ctx, t2) = tipe(ctx)?;
             let (ctx, _) = ctx.consume_token_of_kind(TokenKind::RParen)?;
@@ -513,35 +521,36 @@ fn ginit<'a>(ctx: Ctx<'a>, input: &str) -> ParseResult<'a, Ginit<'a>> {
     Ok(init)
 }
 
-fn gdecl_list<'a>(ctx: Ctx<'a>, end_token: TokenKind, input: &str) -> ParseResult<'a, Vec<(Ty, Ginit<'a>)>> {
+fn gdecl_list<'a, 'b>(ctx: Ctx<'a, 'b>, end_token: TokenKind) -> ParseResult<'a, 'b, Vec<(Ty, Ginit)>> {
     token_separated(ctx, TokenKind::Comma, end_token, |ctx| {
         let (ctx, ty) = tipe(ctx)?;
-        let (ctx, gi) = ginit(ctx, input)?;
+        let (ctx, gi) = ginit(ctx)?;
         Ok((ctx, (ty, gi)))
     })
 }
 
-fn tdecl(ctx: Ctx<'_>) -> ParseResult<'_, (Tid, Ty)> {
+fn tdecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (Tid, Ty)> {
     let (ctx, uid) = ctx.consume_token_of_kind(TokenKind::Uid)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Equals)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Type)?;
     let (mut ctx, ty) = tipe(ctx)?;
-    let tid_ty = (ctx.interners.types.intern(&uid.get_id()), ty);
+    let tid_ty = (ctx.interners.types.intern(uid.get_id(ctx.input)), ty);
     Ok((ctx, tid_ty))
 }
 
-fn edecl(ctx: Ctx<'_>) -> ParseResult<'_, (ArenaIntern<'_, str>, Ty)> {
+fn edecl<'a, 'b>(ctx: Ctx<'a, 'b>) -> ParseResult<'a, 'b, (Gid, Ty)> {
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::Declare)?;
     let (ctx, rty) = tipe(ctx)?;
     let (ctx, gid) = ctx.consume_token_of_kind(TokenKind::Gid)?;
     let (ctx, _) = ctx.consume_token_of_kind(TokenKind::LParen)?;
-    let (ctx, ts) = token_separated(ctx, TokenKind::Comma, TokenKind::RParen, tipe)?;
-    Ok((ctx, (gid.get_id(), Ty::Fun(ts, Box::new(rty)))))
+    let (mut ctx, ts) = token_separated(ctx, TokenKind::Comma, TokenKind::RParen, tipe)?;
+    let gid_id = ctx.interners.globals.intern(gid.get_id(ctx.input));
+    Ok((ctx, (gid_id, Ty::Fun(ts, Box::new(rty)))))
 }
 
-fn token_separated<'a, T, F>(mut ctx: Ctx<'a>, sep: TokenKind, end: TokenKind, mut fun: F) -> ParseResult<'a, Vec<T>>
+fn token_separated<'a, 'b, T, F>(mut ctx: Ctx<'a, 'b>, sep: TokenKind, end: TokenKind, mut fun: F) -> ParseResult<'a, 'b, Vec<T>>
 where
-    F: FnMut(Ctx<'a>) -> ParseResult<'a, T>
+    F: FnMut(Ctx<'a, 'b>) -> ParseResult<'a, 'b, T>
 {
     let mut list = Vec::new();
     let mut first = true;
