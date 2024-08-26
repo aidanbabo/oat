@@ -148,8 +148,8 @@ struct Config {
 }
 
 // this always adds a lists worth of indirection, why?
-fn mval_of_gdecl<'a>(gd: &ast::Gdecl) -> MVal {
-    fn mtree_of_gdecl<'a>(gd: &ast::Gdecl) -> MTree {
+fn mval_of_gdecl(gd: &ast::Gdecl) -> MVal {
+    fn mtree_of_gdecl(gd: &ast::Gdecl) -> MTree {
         match gd {
             (ty, ast::Ginit::Null) => MTree::Word(SVal::Ptr(Ptr {
                 ty: ty.clone(),

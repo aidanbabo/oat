@@ -165,7 +165,7 @@ type CharIter<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
 // todo: all interning in parser
 
-pub fn lex<'a>(input: &str) -> Result<Vec<Token>, LexerError> {
+pub fn lex(input: &str) -> Result<Vec<Token>, LexerError> {
     let mut char_iter: CharIter<'_> = input.char_indices().peekable();
     let mut tokens = Vec::new();
 
@@ -213,7 +213,7 @@ fn no_data(kind: TokenKind, start: usize) -> Token {
     Token { kind, start: start as u32, data: TokenData::NoData }
 }
 
-fn keyword_or_label<'a>(iter: &mut CharIter<'_>, input: &str, start: usize) -> Result<Token, LexerError> {
+fn keyword_or_label(iter: &mut CharIter<'_>, input: &str, start: usize) -> Result<Token, LexerError> {
     static KEYWORDS: Lazy<HashMap<&'static str, TokenKind>> = Lazy::new(|| {
         let mut m = HashMap::new();
         m.insert("i1", TokenKind::I1);
@@ -300,7 +300,7 @@ fn digit(iter: &mut CharIter<'_>, input: &str, start: usize) -> Result<Token, Le
     })
 }
 
-fn ident<'a>(iter: &mut CharIter<'_>, input: &str, start: usize, global: bool) -> Result<Token, LexerError> {
+fn ident(iter: &mut CharIter<'_>, input: &str, start: usize, global: bool) -> Result<Token, LexerError> {
     if iter.peek().is_some_and(|(_, c)| *c == '.') {
         iter.next();
     }

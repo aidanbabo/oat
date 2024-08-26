@@ -16,6 +16,7 @@ pub struct ParseError(String);
 
 // todo as this type gets bigger maybe it's a bad idea to pass it around all the time
 // function style :( or maybe we just box it :)
+// or turn things inside it into references like interners and tokens
 struct Ctx<'a, 'b> {
     tokens: Vec<Token>,
     index: usize,

@@ -113,7 +113,7 @@ impl<'oat, 'll> Context<'oat, 'll> {
             let llast::Ty::Ptr(ty) = ty else { unreachable!() };
             let ll_name = ctx.interners.globals.intern(name);
             ctx.llprog.edecls.push((ll_name, (*ty).clone()));
-            ctx.globals.insert(oat_arena.intern(&name), (ll_name, *ty));
+            ctx.globals.insert(oat_arena.intern(name), (ll_name, *ty));
         }
         
         ctx
