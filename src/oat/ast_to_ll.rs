@@ -90,33 +90,59 @@ impl<'oat, 'll> Context<'oat, 'll> {
     pub fn new(tctx: typechecker::Context<'oat>, arena: &'ll Arena<str>, oat_arena: &'oat Arena<str>) -> Self {
 
         let mut interners = Interners::default();
-        let structs: HashMap<_, _> = tctx.structs.into_iter().map(|(n, fs)| {
-            let pairs = fs.into_iter().map(|(ty, n)| (tipe(&mut interners.types, ty), n)).collect();
-            (n, pairs)
-        }).collect();
 
-        let mut ctx = Context {
-            llprog: llast::Prog::default(),
-            globals: Default::default(),
+        // oat builtins
+        let (mut edecls, globals): (Vec<_>, HashMap<_, _>) = typechecker::BUILTINS
+            .iter()
+            .map(|(name, ty)| {
+                let ty = tipe(&mut interners.types, ty.clone());
+                let llast::Ty::Ptr(ty) = ty else { unreachable!() };
+                let ll_name = interners.globals.intern(name);
+
+                (
+                    (ll_name, (*ty).clone()),
+                    (oat_arena.intern(name), (ll_name, *ty))
+                )
+            })
+            .unzip();
+
+        // internal builtins
+        {
+            use llast::Ty::{Fun, Ptr, I64, Void};
+            edecls.push((interners.globals.intern("oat_assert_array_length"), Fun(vec![Ptr(Box::new(I64)), I64], Box::new(Void)))); // declare void @oat_assert_array_length(i64*, i64)
+            edecls.push((interners.globals.intern("oat_alloc_array"), Fun(vec![I64], Box::new(Ptr(Box::new(I64)))))); // declare i64* @oat_alloc_array(i64)
+            edecls.push((interners.globals.intern("oat_malloc"), Fun(vec![I64], Box::new(Ptr(Box::new(I64)))))); // declare i64* @oat_malloc(i64)
+        }
+
+        let structs: HashMap<_, _> = tctx
+            .structs
+            .into_iter()
+            .map(|(n, fs)| {
+                let pairs = fs
+                    .into_iter()
+                    .map(|(ty, n)| (tipe(&mut interners.types, ty), n))
+                    .collect();
+                (n, pairs)
+            })
+            .collect();
+
+        let ll_to_oat_structs = structs
+            .keys()
+            .map(|oname| (interners.types.intern(oname), *oname))
+            .collect();
+
+        Context {
+            llprog: llast::Prog {
+                edecls,
+                ..Default::default()
+            },
+            globals,
             sym_num: 0,
-            ll_to_oat_structs: structs.keys().map(|oname| (interners.types.intern(oname), *oname)).collect(),
+            ll_to_oat_structs,
             structs,
             arena,
             interners,
-        };
-
-        ctx.llprog.edecls.push((ctx.interners.globals.intern("oat_assert_array_length"), llast::Ty::Fun(vec![llast::Ty::Ptr(Box::new(llast::Ty::I64)), llast::Ty::I64], Box::new(llast::Ty::Void))));
-        ctx.llprog.edecls.push((ctx.interners.globals.intern("oat_alloc_array"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
-        ctx.llprog.edecls.push((ctx.interners.globals.intern("oat_malloc"), llast::Ty::Fun(vec![llast::Ty::I64], Box::new(llast::Ty::Ptr(Box::new(llast::Ty::I64))))));
-        for (name, ty) in typechecker::BUILTINS.iter() {
-            let ty = tipe(&mut ctx.interners.types, ty.clone());
-            let llast::Ty::Ptr(ty) = ty else { unreachable!() };
-            let ll_name = ctx.interners.globals.intern(name);
-            ctx.llprog.edecls.push((ll_name, (*ty).clone()));
-            ctx.globals.insert(oat_arena.intern(name), (ll_name, *ty));
         }
-        
-        ctx
     }
 
     pub fn lower(mut self, oprog: oast::Prog<'oat>) -> llast::Prog<'ll> {
