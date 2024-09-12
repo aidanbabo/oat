@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::StrInterner;
 use crate::llvm::ast as ll;
+use crate::llvm::dataflow::{Analysis, liveness};
 use crate::backend::platform;
 use super::ast::*;
 
@@ -9,6 +10,7 @@ type Layout<'ll> = HashMap<ll::Uid<'ll>, Op>;
 
 struct FunctionContext<'ll> {
     layout: Layout<'ll>,
+    liveness: Analysis<'ll, liveness::Fact<'ll>>,
     name: ll::Gid,
     tdecls: &'ll HashMap<ll::Tid, ll::Ty>,
     labels: &'ll Vec<Box<str>>,
@@ -34,10 +36,12 @@ pub fn x64_from_llvm(ll: ll::Prog<'_>) -> Prog {
     }
 
     for (name, fdecl) in ll.fdecls {
-        let (arg_layout, stack_layout) = layout(&fdecl);
+        let liveness = liveness::run(&fdecl);
+        let (arg_layout, stack_layout) = layout(&fdecl, &liveness);
 
         let fctx = FunctionContext {
             layout: stack_layout,
+            liveness,
             name,
             tdecls: &ll.tdecls,
             labels: &ll.tables.labels,
@@ -113,7 +117,7 @@ fn compile_function<'ll>(fctx: FunctionContext<'ll>, arg_layout: Vec<(ll::Uid<'l
     blocks
 }
 
-fn layout<'ll>(fdecl: &ll::Fdecl<'ll>) -> (Vec<(ll::Uid<'ll>, Op)>, Layout<'ll>) {
+fn layout<'ll>(fdecl: &ll::Fdecl<'ll>, liveness: &Analysis<'ll, liveness::Fact<'ll>>) -> (Vec<(ll::Uid<'ll>, Op)>, Layout<'ll>) {
     let arg_layout = fdecl
         .params
         .iter()
@@ -186,17 +190,23 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label
     match insn {
         ll::Insn::Binop(bop, _, lhs, rhs) => {
             asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), lhs));
-            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rcx), rhs));
             let bop = match bop {
-                ll::Bop::Add => Insn::Add(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::Sub => Insn::Sub(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::Mul => Insn::Imul(Op::Reg(Reg::Rcx), Reg::Rax),
-                ll::Bop::Shl => Insn::Shl(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::Lshr => Insn::Shr(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::Ashr => Insn::Sar(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::And => Insn::And(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::Or => Insn::Or(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
-                ll::Bop::Xor => Insn::Xor(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)),
+                ll::Bop::Add => Insn::Add(translate_op(fctx, labels, rhs), Op::Reg(Reg::Rax)),
+                ll::Bop::Sub => Insn::Sub(translate_op(fctx, labels, rhs), Op::Reg(Reg::Rax)),
+                ll::Bop::Mul => Insn::Imul(translate_op(fctx, labels, rhs), Reg::Rax),
+                ll::Bop::Shl | ll::Bop::Lshr | ll::Bop::Ashr => {
+                    asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rcx), rhs));
+                    let insn = match bop {
+                        ll::Bop::Shl => Insn::Shl,
+                        ll::Bop::Lshr => Insn::Shr,
+                        ll::Bop::Ashr => Insn::Sar,
+                        _ => unreachable!(),
+                    };
+                    insn(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax))
+                }
+                ll::Bop::And => Insn::And(translate_op(fctx, labels, rhs), Op::Reg(Reg::Rax)),
+                ll::Bop::Or => Insn::Or(translate_op(fctx, labels, rhs), Op::Reg(Reg::Rax)),
+                ll::Bop::Xor => Insn::Xor(translate_op(fctx, labels, rhs), Op::Reg(Reg::Rax)),
             };
             asm.insns.push(bop);
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
@@ -216,11 +226,11 @@ fn compile_insn<'ll>(fctx: &FunctionContext<'ll>, labels: &mut StrInterner<Label
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), Op::Ind2(Reg::Rcx)));
         }
         ll::Insn::Icmp(cnd, _, lhs, rhs) => {
-            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rdi), lhs));
-            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rsi), rhs));
-            asm.insns.push(Insn::Xor(Op::Reg(Reg::Rax), Op::Reg(Reg::Rax)));
-            asm.insns.push(Insn::Cmp(Op::Reg(Reg::Rsi), Op::Reg(Reg::Rdi)));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rax), lhs));
+            asm.insns.push(compile_operand(fctx, labels, Op::Reg(Reg::Rcx), rhs));
+            asm.insns.push(Insn::Cmp(Op::Reg(Reg::Rcx), Op::Reg(Reg::Rax)));
             asm.insns.push(Insn::Set(compile_cnd(cnd), Op::Reg(Reg::Rax)));
+            asm.insns.push(Insn::And(Op::Imm(Imm::Word(1)), Op::Reg(Reg::Rax)));
             asm.insns.push(Insn::Mov(Op::Reg(Reg::Rax), fctx.layout[&uid]));
         }
         ll::Insn::Call(ret_ty, fname, args) => {

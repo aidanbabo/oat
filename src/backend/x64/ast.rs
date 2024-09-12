@@ -14,7 +14,7 @@ impl From<u32> for Label {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reg {
     Rax,
     Rbx,
@@ -35,13 +35,13 @@ pub enum Reg {
     Rip,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Imm {
     Word(i64),
     Lbl(Label),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
     Imm(Imm),
     Reg(Reg),
