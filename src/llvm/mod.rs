@@ -8,6 +8,7 @@ pub mod ast;
 pub mod dataflow;
 mod interp;
 mod print;
+pub mod utils;
 
 // todo: priv
 pub mod lexer;

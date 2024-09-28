@@ -8,9 +8,7 @@ pub fn run(mut ll_prog: ast::Prog) -> ast::Prog {
         let liveness = liveness::run(fdecl);
         let alias = alias::run(fdecl);
 
-        // todo: this pattern happens too often, make an iterator or smth
-        dce_block(&mut fdecl.cfg.entry, &liveness, &alias);
-        for (_, b) in &mut fdecl.cfg.blocks {
+        for b in fdecl.cfg.block_iter_mut() {
             dce_block(b, &liveness, &alias);
         }
     }

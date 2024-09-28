@@ -147,18 +147,12 @@ fn layout<'ll>(fdecl: &ll::Fdecl<'ll>, liveness: &Analysis<'ll, liveness::Fact<'
         layout.insert(*uid, arg_callee_loc(i as i64));
     }
 
-    fn find_all_uids<'ll>(uids: &mut Vec<ll::Uid<'ll>>, b: &ll::Block<'ll>) {
-        for (uid, insn) in &b.insns {
-            if !matches!(insn, ll::Insn::Store(..)) {
-                uids.push(*uid);
-            }
-        }
-    }
-    let mut body_uids = Vec::new();
-    find_all_uids(&mut body_uids, &fdecl.cfg.entry);
-    for (_, b) in &fdecl.cfg.blocks {
-        find_all_uids(&mut body_uids, b);
-    }
+    let body_uids: Vec<_> = fdecl
+        .cfg
+        .block_iter()
+        .flat_map(|b| &b.insns)
+        .filter_map(|(uid, insn)| (!matches!(insn, ll::Insn::Store(..))).then_some(*uid))
+        .collect();
 
     let local_offset = std::cmp::min(7, fdecl.params.len() + 1) as i64;
     let ind3 = |i: i64| Op::Ind3(Imm::Word(-8 * (i + local_offset)), Reg::Rbp);

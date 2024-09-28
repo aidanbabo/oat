@@ -119,9 +119,7 @@ pub fn propagate(mut ll_prog: ast::Prog) -> ast::Prog {
     for (_name, fdecl) in &mut ll_prog.fdecls {
         let constness = run(fdecl);
 
-        // todo: this pattern happens too often, make an iterator or smth
-        constprop_block(&mut fdecl.cfg.entry, &constness);
-        for (_, b) in &mut fdecl.cfg.blocks {
+        for b in fdecl.cfg.block_iter_mut() {
             constprop_block(b, &constness);
         }
     }

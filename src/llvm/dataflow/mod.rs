@@ -174,9 +174,8 @@ impl<'a, 'fdecl, F: DataflowFact<'a> + Default + Clone> Graph<'a, 'fdecl, F> {
             g.facts.insert(n, Default::default());
         }
 
-        g.add_block_as_pred(0, &fdecl.cfg.entry);
-        for (ix, (_, b)) in fdecl.cfg.blocks.iter().enumerate() {
-            g.add_block_as_pred(ix + 1, b);
+        for (ix, b) in fdecl.cfg.block_iter().enumerate() {
+            g.add_block_as_pred(ix, b);
         }
 
         g
@@ -358,7 +357,8 @@ impl<'a, F: DataflowFact<'a> + Clone> DFAGraph<'a> for Graph<'a, '_, F> {
     }
 
     fn nodes(&self) -> Vec<Self::Node> {
-        fn add(block: &ast::Block<'_>, bbix: usize, nodes: &mut Vec<Node>) {
+        let mut nodes = vec![Node::Boundary];
+        for (bbix, block) in self.fdecl.cfg.block_iter().enumerate() {
             for (ix, _) in block.insns.iter().enumerate() {
                 nodes.push(Node::Insn {
                     bbix,
@@ -366,12 +366,6 @@ impl<'a, F: DataflowFact<'a> + Clone> DFAGraph<'a> for Graph<'a, '_, F> {
                 });
             }
             nodes.push(Node::Term { bbix });
-        }
-
-        let mut nodes = vec![Node::Boundary];
-        add(&self.fdecl.cfg.entry, 0, &mut nodes);
-        for (bbix, (_lbl, bb)) in self.fdecl.cfg.blocks.iter().enumerate() {
-            add(bb, bbix + 1, &mut nodes);
         }
         nodes
     }
