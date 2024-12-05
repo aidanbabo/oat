@@ -30,7 +30,7 @@ pub enum TyKind<'ast> {
     Fun(Vec<Ty<'ast>>, Box<Ty<'ast>>),
 }
 
-impl<'ast> TyKind<'ast> {
+impl TyKind<'_> {
     pub fn is_ref(&self) -> bool {
         use TyKind as Tk;
         matches!(self, Tk::String | Tk::Struct(..) | Tk::Array(..) | Tk::Fun(..))

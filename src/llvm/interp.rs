@@ -134,7 +134,7 @@ impl<'a> ops::Deref for Locals<'a> {
     }
 }
 
-impl<'a> ops::DerefMut for Locals<'a> {
+impl ops::DerefMut for Locals<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

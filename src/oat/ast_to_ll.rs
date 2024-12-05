@@ -25,7 +25,7 @@ struct FunContext<'oat, 'll> {
     ret_ty: llast::Ty,
 }
 
-impl<'oat, 'll> FunContext<'oat, 'll> {
+impl<'ll> FunContext<'_, 'll> {
     pub fn start_block(&mut self, lbl: llast::Lbl) {
         self.current.label = Some(lbl);
     }

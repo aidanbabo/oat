@@ -6,13 +6,20 @@ use std::collections::HashMap;
 
 use internment::{Arena, ArenaIntern};
 
-use super::lexer::{lex, Token, TokenKind};
+use super::lexer::{lex, LexerError, Token, TokenKind};
 use super::ast::*;
 use super::Interners;
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ParseError(String);
+
+impl From<LexerError> for ParseError {
+    fn from(value: LexerError) -> Self {
+        ParseError(value.0)
+    }
+}
+
 
 // todo as this type gets bigger maybe it's a bad idea to pass it around all the time
 // function style :( or maybe we just box it :)
@@ -26,7 +33,7 @@ struct Ctx<'a, 'b> {
     input: &'b str,
 }
 
-impl<'a, 'b> Ctx<'a, 'b> {
+impl<'a> Ctx<'a, '_> {
     fn token_offset(&self, offset: usize) -> Option<Token> {
         self.tokens.get(self.index + offset).cloned()
     }
@@ -73,7 +80,7 @@ impl<'a, 'b> Ctx<'a, 'b> {
 type ParseResult<'a, 'b, T> = Result<(Ctx<'a, 'b>, T), ParseError>;
 
 pub fn parse<'a, 'b>(input: &'b str, arena: &'a Arena<str>) -> Result<Prog<'a>, ParseError> {
-    let tokens = lex(input).unwrap();
+    let tokens = lex(input)?;
     let mut ctx = Ctx {
         tokens,
         index: 0,
@@ -125,7 +132,7 @@ pub fn parse<'a, 'b>(input: &'b str, arena: &'a Arena<str>) -> Result<Prog<'a>, 
                 edecls.push(edecl);
                 ctx = c;
             }
-            _ => panic!("unexpected token"),
+            t => return Err(ParseError(format!("Unexpected token '{t:?}' when trying to parse new top level statement"))),
         }
     }
 

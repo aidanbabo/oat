@@ -159,7 +159,7 @@ impl Token {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub struct LexerError(String);
+pub struct LexerError(pub(crate) String);
 
 type CharIter<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 

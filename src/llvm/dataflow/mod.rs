@@ -87,7 +87,7 @@ impl<'a, T> Analysis<'a, T> {
     }
 }
 
-impl<'a, T: fmt::Debug> fmt::Debug for Analysis<'a, T> {
+impl<T: fmt::Debug> fmt::Debug for Analysis<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut vals: Vec<_> = self.map.iter().collect();
         vals.sort_by_key(|(_uid, ix)| *ix);
@@ -201,7 +201,7 @@ impl<'a, 'fdecl, F: DataflowFact<'a> + Default + Clone> Graph<'a, 'fdecl, F> {
     }
 }
 
-impl<'a, F> Graph<'a, '_, F> {
+impl<F> Graph<'_, '_, F> {
     fn nodes_before(&self, n: Node) -> Vec<Node> {
         match n {
             Node::Insn { bbix, ix } => {

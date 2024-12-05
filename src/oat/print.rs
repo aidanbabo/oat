@@ -140,7 +140,7 @@ fn write_type<W: io::Write>(w: &mut W, t: &Tdecl) -> io::Result<()> {
     writeln!(w, "}}")
 }
 
-impl<'ast> fmt::Display for Ty<'ast> {
+impl fmt::Display for Ty<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             TyKind::Void => write!(f, "void")?,
@@ -175,7 +175,7 @@ impl<'ast> fmt::Display for Ty<'ast> {
     }
 }
 
-impl<'ast> fmt::Display for Exp<'ast> {
+impl fmt::Display for Exp<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Exp::Null(t) => write!(f, "{t} null"),
@@ -279,7 +279,7 @@ impl fmt::Display for Binop {
     }
 }
 
-impl<'ast> fmt::Display for Vdecl<'ast> {
+impl fmt::Display for Vdecl<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "var {} = {}", self.name, *self.exp)
     }

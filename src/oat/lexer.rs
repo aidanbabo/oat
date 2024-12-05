@@ -162,7 +162,7 @@ pub enum TokenData<'output> {
 }
 
 impl<'output> Token<'output> {
-    fn one_line(kind: TokenKind, line: usize, start: usize, len: usize, data: TokenData<'output>) -> Token {
+    fn one_line(kind: TokenKind, line: usize, start: usize, len: usize, data: TokenData<'output>) -> Self {
         Token {
             loc: Range { 
                 start: (line, start),

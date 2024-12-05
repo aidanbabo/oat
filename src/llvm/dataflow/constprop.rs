@@ -18,7 +18,7 @@ pub enum Const {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Fact<'a>(pub HashMap<ast::Uid<'a>, Const>);
 
-impl<'a> Fact<'a> {
+impl Fact<'_> {
     fn constness_of_operand(&self, o: ast::Operand<'_>) -> Const {
         match o {
             ast::Operand::Null => Const::Undef,
