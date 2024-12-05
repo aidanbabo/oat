@@ -18,6 +18,8 @@ pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
         write_code_block(&mut w, &prog.labels, code)?;
     }
 
+    writeln!(w, "\t.section \".note.GNU-stack\"")?;
+
     Ok(())
 }
 
