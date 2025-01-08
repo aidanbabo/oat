@@ -670,6 +670,7 @@ mod tests {
     use super::*;
     use ast::*;
     use internment::Arena;
+    use crate::frontend::lexer::Lexer;
 
     fn nl<T>(t: T) -> Node<T> {
         Node::no_loc(t)
@@ -699,7 +700,7 @@ mod tests {
     }
 
     fn lex_toks<'out>(s: &str, a: &'out Arena<str>) -> Vec<Token<'out>> {
-        crate::oat::lexer::Lexer::new(s, a).lex_all().unwrap()
+        Lexer::new(s, a).lex_all().unwrap()
     }
 
     fn exp_test<F>(s: &str, expected_fn: F) -> Result<(), ParseError>

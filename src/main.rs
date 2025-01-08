@@ -7,6 +7,8 @@ use std::io::BufWriter;
 use std::process::{self, Command};
 use std::time::{Instant, Duration};
 
+use oat::{backend, frontend, llvm};
+
 #[derive(Parser)]
 struct Args {
     path: PathBuf,
@@ -30,7 +32,8 @@ struct Args {
     timings: bool,
     #[arg(long)]
     recompile_runtime: bool,
-    // todo: add cross compilation support?
+    #[arg(long)]
+    arch: Option<String>,
 }
 
 #[derive(Default)]
@@ -98,6 +101,16 @@ fn main() {
         eprintln!("need a file extension");
         process::exit(1);
     };
+    let arch = match backend::arch(args.arch.as_deref()) {
+        Ok(a) => Some(a),
+        Err(arch) if !args.clang => {
+            eprintln!("Unsupported architecture '{arch}'");
+            std::process::exit(1);
+        }
+        // todo: handle properly. should have a clang decided Arch member for this case or it
+        // shouldn't be supported.
+        _ => None,
+    };
 
     let mut timings: Timings = Default::default();
 
@@ -108,7 +121,7 @@ fn main() {
 
         let start = Instant::now();
         let s = fs::read_to_string(&args.path).unwrap();
-        let prog = match oat::oat::parse(&s, &oat_arena) {
+        let prog = match frontend::parse(&s, &oat_arena) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e:?}");
@@ -118,13 +131,13 @@ fn main() {
         timings.parsing = Some(start.elapsed());
 
         if args.print_oat {
-            oat::oat::print(&prog);
+            frontend::print(&prog);
         }
 
         let start = Instant::now();
-        let tctx = match oat::oat::typecheck(&prog, &oat_arena) {
+        let tctx = match frontend::typecheck(&prog, &oat_arena) {
             Ok(tctx) => tctx,
-            Err(oat::oat::TypeError(msg)) => {
+            Err(frontend::TypeError(msg)) => {
                 eprintln!("Type Error: {msg}");
                 process::exit(1);
             }
@@ -136,13 +149,13 @@ fn main() {
         }
 
         let start = Instant::now();
-        let ll = oat::oat::to_llvm(prog, tctx, &ll_arena, &oat_arena);
+        let ll = frontend::to_llvm(prog, tctx, &ll_arena, &oat_arena);
         timings.to_llvm = Some(start.elapsed());
         ll
     } else if ext == "ll" {
         let start = Instant::now();
         let s = fs::read_to_string(&args.path).unwrap();
-        let ll = match oat::llvm::parse(&s, &ll_arena) {
+        let ll = match llvm::parse(&s, &ll_arena) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{e:?}");
@@ -156,27 +169,26 @@ fn main() {
         process::exit(1);
     };
 
-    // todo: optimizations
     if args.print_preopt_ll {
-        oat::llvm::print(&ll_prog);
+        llvm::print(&ll_prog);
     }
     
     let start = Instant::now();
-    let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
-    let ll_prog = oat::llvm::dataflow::dce::run(ll_prog);
+    let ll_prog = llvm::dataflow::constprop::propagate(ll_prog);
+    let ll_prog = llvm::dataflow::dce::run(ll_prog);
     // todo: remove and do dce until fixed point internally
-    let ll_prog = oat::llvm::dataflow::constprop::propagate(ll_prog);
-    let ll_prog = oat::llvm::dataflow::dce::run(ll_prog);
+    let ll_prog = llvm::dataflow::constprop::propagate(ll_prog);
+    let ll_prog = llvm::dataflow::dce::run(ll_prog);
     timings.optimizations = Some(start.elapsed());
 
     if args.print_ll {
-        oat::llvm::print(&ll_prog);
+        llvm::print(&ll_prog);
     }
 
     if args.interpret_ll {
         let start = Instant::now();
         let prog_args: Vec<_> = args.program_args.iter().map(|s| &**s).collect();
-        let r = oat::llvm::interp(&ll_prog, &prog_args, "main").unwrap();
+        let r = llvm::interp(&ll_prog, &prog_args, "main").unwrap();
         timings.interpreting = Some(start.elapsed());
         println!("Interpreter Result: {r}");
         if args.timings {
@@ -195,7 +207,7 @@ fn main() {
         let asm_path = base_path.with_extension("S");
 
         let ll_file = BufWriter::new(File::create(&ll_path).unwrap());
-        oat::llvm::write(ll_file, &ll_prog).unwrap();
+        llvm::write(ll_file, &ll_prog).unwrap();
         let cmd = Command::new("clang")
             .arg(&ll_path)
             .arg("-S")
@@ -212,16 +224,28 @@ fn main() {
 
         asm_path
     } else {
-        let asm_prog = oat::backend::x64::x64_from_llvm(ll_prog);
-
-        if args.print_asm {
-            oat::backend::x64::print(&asm_prog);
-        }
+        use backend::{Arch, x64};
 
         let base_name = args.path.file_stem().unwrap();
         let path = PathBuf::from("output").join(base_name).with_extension("S");
-        let file = BufWriter::new(File::create(&path).unwrap());
-        oat::backend::x64::write(file, &asm_prog).unwrap();
+
+        match arch.expect("Must supply architecture for custom backend") {
+            Arch::X64 => {
+                let asm_prog = x64::x64_from_llvm(ll_prog);
+
+                if args.print_asm {
+                    x64::print(&asm_prog);
+                }
+
+                let file = BufWriter::new(File::create(&path).unwrap());
+                x64::write(file, &asm_prog).unwrap();
+            }
+            Arch::Aarch64 => {
+                eprintln!("Support for aarch64 isn't implemented yet");
+                std::process::exit(1);
+            }
+        }
+
         path
     };
     timings.to_assembly = Some(start.elapsed());

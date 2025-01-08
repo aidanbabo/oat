@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::convert::From;
 
-pub mod llvm;
-pub mod oat;
 pub mod backend;
+pub mod frontend;
+pub mod llvm;
 
 pub struct StrInterner<T> {
     pool: Vec<Box<str>>,

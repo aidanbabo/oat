@@ -219,6 +219,7 @@ impl<'input, 'output> Lexer<'input, 'output> {
             if let Some((_, 'x')) = self.chars.peek() {
                 end = self.chars.next().unwrap().0;
                 hex = true;
+                // todo: prevent `0x` from being valid literal for `0`
             }
             Some(0i64)
         } else {
