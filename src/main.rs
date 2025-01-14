@@ -80,14 +80,13 @@ fn print_timings(timings: &Timings) {
     println!("Total: {total:?}");
 }
 
-fn precompile_runtime(args: &Args, path: &Path) {
-    let precompiled_runtime = path;
-    if args.recompile_runtime || !precompiled_runtime.exists() {
+fn precompile_runtime(args: &Args, source_path: &Path, precompiled_path: &Path) {
+    if args.recompile_runtime || !precompiled_path.exists() {
         Command::new("clang")
-            .arg(precompiled_runtime.with_extension("c"))
+            .arg(source_path)
             .arg("-c")
             .arg("-mstackrealign")
-            .args(["-o", &precompiled_runtime.to_string_lossy()])
+            .args(["-o", &precompiled_path.to_string_lossy()])
             .spawn()
             .unwrap()
             .wait()
@@ -101,16 +100,11 @@ fn main() {
         eprintln!("need a file extension");
         process::exit(1);
     };
-    let arch = match backend::arch(args.arch.as_deref()) {
-        Ok(a) => Some(a),
-        Err(arch) if !args.clang => {
-            eprintln!("Unsupported architecture '{arch}'");
+
+    if let Err(e) = backend::set_target(None, args.arch.as_deref()) {
+            eprintln!("Error setting platform: '{e}'");
             std::process::exit(1);
-        }
-        // todo: handle properly. should have a clang decided Arch member for this case or it
-        // shouldn't be supported.
-        _ => None,
-    };
+    }
 
     let mut timings: Timings = Default::default();
 
@@ -229,7 +223,7 @@ fn main() {
         let base_name = args.path.file_stem().unwrap();
         let path = PathBuf::from("output").join(base_name).with_extension("S");
 
-        match arch.expect("Must supply architecture for custom backend") {
+        match backend::get_target().arch {
             Arch::X64 => {
                 let asm_prog = x64::x64_from_llvm(ll_prog);
 
@@ -253,15 +247,31 @@ fn main() {
     let start = Instant::now();
     let mut cmd = Command::new("clang");
     cmd.arg(&clang_input_file_path);
-    if ext == "oat" {
-        let path = Path::new("runtime/oat_runtime.o");
-        precompile_runtime(&args, path);
-        cmd.arg(path);
-    } else if ext == "ll" {
-        let path = Path::new("runtime/ll_runtime.o");
-        precompile_runtime(&args, path);
-        cmd.arg(path);
-    }
+    let (runtime_path, precompiled_runtime_path) = {
+        use backend::{Os, Arch};
+
+        let language = match ext {
+            "oat" => "oat",
+            "ll" => "ll",
+            _ => panic!("unsupported file extension"),
+        };
+        let target = backend::get_target();
+        let os = match target.os {
+            Os::MacOs => "mac",
+            Os::Linux => "linux",
+        };
+        let arch = match target.arch {
+            Arch::X64=> "x86_64",
+            Arch::Aarch64 => "aarch64",
+        };
+        (
+            PathBuf::from(format!("runtime/{language}_runtime.c")),
+            PathBuf::from(format!("runtime/{language}_runtime-{os}-{arch}.o")),
+        )
+    };
+    precompile_runtime(&args, &runtime_path, &precompiled_runtime_path);
+    cmd.arg(precompiled_runtime_path);
+
     let run = cmd
         .arg("-mstackrealign") // automatically realigns stack for "backward compatibility" 
                                // i.e. allows us to be lazier

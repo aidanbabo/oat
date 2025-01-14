@@ -147,6 +147,8 @@ def run_test(test: Test) -> TestResult:
         proc_args.append('--interpret-ll')
     if args.clang:
         proc_args.append('--clang')
+    if args.arch:
+        proc_args.append(f'--arch={args.arch}')
     if test.typecheck:
         proc_args.append('--check')
     # todo: program args to interpreter
@@ -276,6 +278,10 @@ if __name__ == '__main__':
     hw5_test_categories = ['tc_eq', 'tc_subtyping', 'tc_statement', 'tc_expression', 'tc_struct', 'tc_global', 'tc_other', 'tc_ok', 'tc_err', 'struct', 'fptr', 'new']
     custom_categories = ['custom']
 
+    # todo: partial argument parsing and forwarding
+    # https://docs.python.org/3/library/argparse.html#partial-parsing
+    # should arguments be compiler options or runtime options? it can't really be both?
+    # should there be more explicit pass-through mechanisms?
     parser = argparse.ArgumentParser()
     parser.add_argument('suite', default='all', nargs='?', choices=['all','oat', 'custom', 'hw4', 'hw5', 'llvm'])
     parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories + hw5_test_categories + custom_categories, default='all')
@@ -284,6 +290,7 @@ if __name__ == '__main__':
     parser.add_argument('--interpret-ll', action='store_true', default=False)
     parser.add_argument('--clang', action='store_true', default=False)
     parser.add_argument('--debug', action='store_true', default=False)
+    parser.add_argument('--arch')
     args = parser.parse_args()
 
     main()

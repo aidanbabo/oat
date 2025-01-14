@@ -1,6 +1,7 @@
 use std::io;
 use std::fmt;
 
+use crate::backend;
 use super::ast::*;
 
 pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
@@ -18,7 +19,9 @@ pub fn write<W: io::Write>(mut w: W, prog: &Prog) -> io::Result<()> {
         write_code_block(&mut w, &prog.labels, code)?;
     }
 
-    writeln!(w, "\t.section \".note.GNU-stack\"")?;
+    if backend::get_target().os == backend::Os::Linux {
+        writeln!(w, "\t.section \".note.GNU-stack\"")?;
+    }
 
     Ok(())
 }
