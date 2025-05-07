@@ -2,12 +2,12 @@
 ;;exitcode 0
 ;;interp_skip takes too long
 %vec = type [2 x i64]
-%mat = type [2 x %vec]
+%mat = type [2 x [2 x i64]]
 
-@mat1 = global %mat [ %vec [ i64 1, i64 2 ], %vec [ i64 3, i64 4 ] ]
-@mat2 = global %mat [ %vec [ i64 5, i64 6 ], %vec [ i64 7, i64 8 ] ]
-@mat3 = global %mat [ %vec [ i64 19, i64 22 ], %vec [ i64 43, i64 50 ] ]
-@matr = global %mat [ %vec [ i64 0, i64 0 ], %vec [ i64 0, i64 0 ] ]
+@mat1 = global %mat [ [2 x i64] [ i64 1, i64 2 ], [2 x i64] [ i64 3, i64 4 ] ]
+@mat2 = global %mat [ [2 x i64] [ i64 5, i64 6 ], [2 x i64] [ i64 7, i64 8 ] ]
+@mat3 = global %mat [ [2 x i64] [ i64 19, i64 22 ], [2 x i64] [ i64 43, i64 50 ] ]
+@matr = global %mat [ [2 x i64] [ i64 0, i64 0 ], [2 x i64] [ i64 0, i64 0 ] ]
 
 define i64 @main(i64 %argc, i8** %argv) {
   %cnt = alloca i64

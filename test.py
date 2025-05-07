@@ -4,7 +4,7 @@ import argparse
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
-import pathlib
+from pathlib import Path
 import subprocess
 import sys
 from typing import List, Tuple
@@ -16,13 +16,13 @@ def eprint(*args, **kwargs):
 
 @dataclass
 class Test:
-    path: str
+    path: Path
     exitcode: int = 0
     category: str = 'none'
     skip: str = ''
     interp_skip: str = ''
-    todo: bool = False
-    prints: str = b''
+    todo: str | None = None
+    prints: bytes = b''
     passed_by_name: bool = False
     args: List[str] = dataclasses.field(default_factory=list)
     typecheck: str = ''
@@ -32,8 +32,7 @@ class TestResult(Enum):
     FAILED = 1
     SKIPPED = 2
 
-# todo: it isn't a str
-def parse_test(filepath: str) -> Test:
+def parse_test(filepath: Path) -> Test:
     comment_str = '/*' if filepath.suffix == '.oat' else ';;'
 
     test_options = []
@@ -57,7 +56,7 @@ def parse_test(filepath: str) -> Test:
     test = test_from_options(filepath, test_options)
     return test
 
-def test_from_options(filepath: str, options: List[Tuple[str, str]]) -> Test:
+def test_from_options(filepath: Path, options: List[Tuple[str, str]]) -> Test:
     is_oat = filepath.suffix == '.oat'
     test = Test(filepath)
     for opt, rest in options:
@@ -87,7 +86,7 @@ def test_from_options(filepath: str, options: List[Tuple[str, str]]) -> Test:
             eprint(f"unrecognized test option for program at '{filepath}': '{opt}'")
     return test
 
-def parse_tests(paths: List[str]) -> List[Test]:
+def parse_tests(paths: List[Path]) -> List[Test]:
     tests = []
     for p in paths:
         t = parse_test(p)
@@ -135,7 +134,10 @@ def eval_test(test: Test, exitcode: int, prints: bytes) -> TestResult:
         eprint('PASS')
     return TestResult.PASSED
 
-def run_test(test: Test, path_len_max: int) -> TestResult:
+def run_test(test: Test, path_len_max: int | None = None) -> TestResult:
+    if path_len_max is None:
+        path_len_max = len(str(test.path))
+
     padding = "." * (path_len_max - len(str(test.path)))
     eprint(f"\t{test.path}{padding}...", end='')
 
@@ -209,10 +211,10 @@ def run_tests(tests: List[Test]):
         elif tr == TestResult.SKIPPED:
             skipped += 1
         elif tr == TestResult.FAILED:
+            failed += 1
             if args.early:
                 print(f"exiting early. {len(tests) - i - 1} tests left unrun")
                 break
-            failed += 1
     print(f"{passed} passed, {failed} failed, {skipped} skipped")
 
 
@@ -221,19 +223,19 @@ def list_tests(tests: List[Test]):
         print(t.path)
 
 def ll_files():
-    files = [p for p in pathlib.Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
+    files = [p for p in Path('tests/programs/llprograms').glob('*.ll') if 'analysis' not in str(p)]
     return files
 
 def hw4_files():
-    files = [p for p in pathlib.Path('tests/programs/hw4programs').glob('*.oat')]
+    files = [p for p in Path('tests/programs/hw4programs').glob('*.oat')]
     return files
 
 def hw5_files():
-    files = [p for p in pathlib.Path('tests/programs/hw5programs').glob('*.oat')]
+    files = [p for p in Path('tests/programs/hw5programs').glob('*.oat')]
     return files
 
 def custom_files():
-    files = [p for p in pathlib.Path('tests/programs/custom').glob('*.oat')]
+    files = [p for p in Path('tests/programs/custom').glob('*.oat')]
     return files
 
 def main():
@@ -261,7 +263,11 @@ def main():
         files = ll_files()
         tests = parse_tests(files)
     else:
-        path = pathlib.Path(args.suite)
+        path = Path(args.suite)
+        if not path.exists():
+            eprint('The provided test path does not exist')
+            exit(1)
+
         t = parse_test(path)
         t.passed_by_name = True
         run_test(t)
@@ -269,7 +275,6 @@ def main():
 
     tests = filter_tests(tests)
     tests.sort(key=lambda t: (t.category, t.path))
-    # todo: group tests by category
     if args.list:
         list_tests(tests)
     else:
@@ -286,7 +291,7 @@ if __name__ == '__main__':
     # should arguments be compiler options or runtime options? it can't really be both?
     # should there be more explicit pass-through mechanisms?
     parser = argparse.ArgumentParser()
-    parser.add_argument('suite', default='all', nargs='?', choices=['all','oat', 'custom', 'hw4', 'hw5', 'llvm'])
+    parser.add_argument('suite', default='all', nargs='?', help='the test file to run or a choice of test suite from "all", "custom", "hw4", "hw5" and "llvm". (default = %(default))')
     parser.add_argument('-c', '--category', choices=['all', 'none'] + llvm_test_categories + hw4_test_categories + hw5_test_categories + custom_categories, default='all')
     parser.add_argument('-l', '--list', action='store_true')
     parser.add_argument('--early', action='store_true')
