@@ -10,15 +10,15 @@ pub type ParseResult<T> = Result<T, ParseError>;
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Precedence {
-    // nothing!
+    /// nothing!
     None,
-    // [|]
+    /// [|]
     IOr,
-    // [&]
+    /// [&]
     IAnd,
-    // |
+    /// |
     Or,
-    // &
+    /// &
     And,
     /// == !=
     Equality,
